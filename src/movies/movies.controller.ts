@@ -66,6 +66,17 @@ export class MoviesController {
     return result;
   }
 
+  @Get('magnet')
+  async getMagnet(
+    @Res({ passthrough: true }) res: Response,
+    @Query('title') title: string,
+    @Query('year') year: string
+  ): Promise<{ magnet: string }> {
+    setCache(res, 86400); // 24-hour cache for magnet links
+    const magnet = await this.moviesService.getMagnetLink(title, year);
+    return { magnet };
+  }
+
   @Get(':id')
   async getMovieById(
     @Res({ passthrough: true }) res: Response,

@@ -38,6 +38,8 @@ export class StreamController {
       }
     }
 
+    console.log(`Starting torrent stream for magnet: ${magnet}`);
+
     let engine = this.engines.get(magnet);
 
     if (!engine) {
@@ -66,9 +68,20 @@ export class StreamController {
       });
     }
 
-    // Wait for the engine to be ready
+    // Wait for the engine to be ready with a 15-second timeout
     if (!engine.torrent) {
-      await new Promise(resolve => engine.on('ready', resolve));
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          this.engines.delete(magnet);
+          engine.destroy();
+          reject(new HttpException('Timeout: Could not fetch torrent metadata. No seeders found.', HttpStatus.GATEWAY_TIMEOUT));
+        }, 15000);
+        
+        engine.on('ready', () => {
+          clearTimeout(timeout);
+          resolve(true);
+        });
+      });
     }
 
     // Find the largest file (usually the video)

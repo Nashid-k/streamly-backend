@@ -252,7 +252,7 @@ export class MoviesService implements OnModuleInit {
       { name: 'Mapple (4KHD)',   url: `https://www.2embed.cc/embed/${tmdbIdStr}#mapple`,                                   type: 'stream' as const },
       { name: 'Main',        url: `https://multiembed.mov/directstream.php?video_id=${tmdbIdStr}&tmdb=1`,                   type: 'stream' as const },
       { name: 'Prime',       url: `https://primestream.io/embed/movie/${tmdbIdStr}`,                                        type: 'stream' as const },
-      { name: 'Torrent Web (Multi-Audio)', url: `${process.env.BACKEND_URL || 'https://streamly-backend-9q7i.onrender.com'}/stream?title=${encodeURIComponent(item.title || item.name)}&year=${(item.release_date || item.first_air_date || '').substring(0, 4)}`, type: 'stream' as const }
+      { name: 'Torrent Web (Multi-Audio)', url: `webtor:${encodeURIComponent(item.title || item.name)}|${(item.release_date || item.first_air_date || '').substring(0, 4)}`, type: 'stream' as const }
     ];
     const sources = rawSources.map(s => ({ ...s, url: s.name.includes('Torrent') ? s.url : this.encodeUrl(s.url) }));
 
@@ -1096,6 +1096,31 @@ export class MoviesService implements OnModuleInit {
     } catch {
       return { hasIntro: false, startSeconds: 0, endSeconds: 0 };
     }
+  }
+
+  async getMagnetLink(title: string, year: string): Promise<string> {
+    try {
+      const query = encodeURIComponent(`${title} ${year} 1080p multi`);
+      const response = await fetch(`https://apibay.org/q.php?q=${query}`);
+      const data = await response.json();
+      
+      if (data && data.length > 0 && data[0].info_hash && data[0].info_hash !== '0000000000000000000000000000000000000000') {
+        const hash = data[0].info_hash;
+        return `magnet:?xt=urn:btih:${hash}&tr=udp://tracker.opentrackr.org:1337/announce`;
+      } else {
+        // Fallback to non-multi search
+        const fbQuery = encodeURIComponent(`${title} ${year} 1080p`);
+        const fbResponse = await fetch(`https://apibay.org/q.php?q=${fbQuery}`);
+        const fbData = await fbResponse.json();
+        if (fbData && fbData.length > 0 && fbData[0].info_hash && fbData[0].info_hash !== '0000000000000000000000000000000000000000') {
+          const hash = fbData[0].info_hash;
+          return `magnet:?xt=urn:btih:${hash}&tr=udp://tracker.opentrackr.org:1337/announce`;
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`Failed to fetch magnet for ${title}: ${e.message}`);
+    }
+    return '';
   }
 }
 
