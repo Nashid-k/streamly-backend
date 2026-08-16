@@ -242,7 +242,6 @@ export class MoviesService implements OnModuleInit {
       { name: 'Main',        url: `https://multiembed.mov/directstream.php?video_id=${tmdbIdStr}&tmdb=1&s=1&e=1`,            type: 'stream' as const },
       { name: 'Prime',       url: `https://primestream.io/embed/tv/${tmdbIdStr}/1/1`,                                        type: 'stream' as const }
     ] : [
-      { name: 'Torrent Web (Multi-Audio)', url: `http://localhost:4000/stream?title=${encodeURIComponent(item.title || item.name)}&year=${(item.release_date || item.first_air_date || '').substring(0, 4)}`, type: 'stream' as const },
       { name: 'VidLink',     url: `https://vidlink.pro/movie/${tmdbIdStr}?${vl}`,                                            type: 'stream' as const },
       { name: 'AutoEmbed',   url: `https://autoembed.co/movie/tmdb/${tmdbIdStr}`,                                            type: 'stream' as const },
       { name: 'VidSrc.pro',  url: `https://vidsrc.pro/embed/movie/${tmdbIdStr}`,                                             type: 'stream' as const },
@@ -252,7 +251,8 @@ export class MoviesService implements OnModuleInit {
       { name: 'VidSrc',      url: `https://vidsrc.pm/embed/movie/${tmdbIdStr}`,                                            type: 'stream' as const },
       { name: 'Mapple (4KHD)',   url: `https://www.2embed.cc/embed/${tmdbIdStr}#mapple`,                                   type: 'stream' as const },
       { name: 'Main',        url: `https://multiembed.mov/directstream.php?video_id=${tmdbIdStr}&tmdb=1`,                   type: 'stream' as const },
-      { name: 'Prime',       url: `https://primestream.io/embed/movie/${tmdbIdStr}`,                                        type: 'stream' as const }
+      { name: 'Prime',       url: `https://primestream.io/embed/movie/${tmdbIdStr}`,                                        type: 'stream' as const },
+      { name: 'Torrent Web (Multi-Audio)', url: `http://localhost:4000/stream?title=${encodeURIComponent(item.title || item.name)}&year=${(item.release_date || item.first_air_date || '').substring(0, 4)}`, type: 'stream' as const }
     ];
     const sources = rawSources.map(s => ({ ...s, url: s.name.includes('Torrent') ? s.url : this.encodeUrl(s.url) }));
 
