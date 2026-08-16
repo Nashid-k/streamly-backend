@@ -1,6 +1,6 @@
 import { Controller, Get, Req, Res, Query, HttpException, HttpStatus } from '@nestjs/common';
 import { Request, Response } from 'express';
-import * as torrentStream from 'torrent-stream';
+const torrentStream = require('torrent-stream');
 
 @Controller('stream')
 export class StreamController {
