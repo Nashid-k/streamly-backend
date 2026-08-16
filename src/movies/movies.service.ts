@@ -396,8 +396,11 @@ export class MoviesService implements OnModuleInit {
 
       // 5. Massive Indian Cinema Rail (Combined)
       indianCinemaRail,
+      
+      // 6. Multi-Language / Dubbed Hits
+      { id: 'multi-language-dubs', name: 'Available in Multiple Languages', mediaType: 'movie', path: `discover/movie?${baseDiscoverMovie}&with_original_language=en|te|ta|ml&with_spoken_languages=hi|ta|te&sort_by=popularity.desc&vote_count.gte=500` },
 
-      // 6. Dynamic Regional Specific Rails
+      // 7. Dynamic Regional Specific Rails
       ...shuffledRegional,
     ];
   }
@@ -623,7 +626,7 @@ export class MoviesService implements OnModuleInit {
    * other providers. Only use an explicit YouTube Trailer/Teaser for playback;
    * showing no trailer is preferable to presenting an unrelated video.
    */
-  private selectTrailerVideo(videos: any[], originalLanguage?: string): any {
+  private selectTrailerVideo(videos: any[], originalLanguage?: string, platform?: string): any {
     const preferredLanguages = [originalLanguage, this.language.split('-')[0], 'en'].filter(Boolean);
     const score = (video: any) => {
       const typeScore = video.type === 'Trailer' ? 300 : video.type === 'Teaser' ? 100 : video.type === 'Clip' ? 50 : 10;
@@ -633,8 +636,20 @@ export class MoviesService implements OnModuleInit {
         : 0;
       // Bonus if it's the exact original language, to prioritize it over en-tagged hindi trailers
       const isOriginalLang = video.iso_639_1 === originalLanguage ? 5000 : 0;
+      
+      // Bonus if the trailer name explicitly matches the platform brand
+      let platformBonus = 0;
+      const vName = (video.name || '').toLowerCase();
+      if (platform === 'nprime' && (vName.includes('amazon') || vName.includes('prime'))) {
+        platformBonus = 10000;
+      } else if (platform === 'nflix' && vName.includes('netflix')) {
+        platformBonus = 10000;
+      } else if (platform === 'hotstar' && (vName.includes('hotstar') || vName.includes('disney'))) {
+        platformBonus = 10000;
+      }
+
       const publishedAt = Date.parse(video.published_at || '');
-      return officialScore + typeScore + languageScore + isOriginalLang + (Number.isFinite(publishedAt) ? publishedAt / 1e13 : 0);
+      return officialScore + typeScore + languageScore + isOriginalLang + platformBonus + (Number.isFinite(publishedAt) ? publishedAt / 1e13 : 0);
     };
 
     return videos
@@ -682,7 +697,7 @@ export class MoviesService implements OnModuleInit {
           movie.logoUrl = this.image(logoObj.file_path, 'w500');
         }
 
-        const bestVideo = this.selectTrailerVideo(details.videos?.results || [], details.original_language);
+        const bestVideo = this.selectTrailerVideo(details.videos?.results || [], details.original_language, platform);
         
         // If TMDB doesn't have a trailer, OR if the trailer isn't in the original language (for non-English movies)
         const isMissingOrWrongLang = !bestVideo || (details.original_language !== 'en' && bestVideo.iso_639_1 !== details.original_language);
