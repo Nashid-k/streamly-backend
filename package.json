@@ -6,10 +6,10 @@
   "private": true,
   "license": "MIT",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "cross-env NODE_OPTIONS=--max_old_space_size=400 tsc -p tsconfig.build.json",
     "format": "prettier --write \"src/**/*.ts\"",
-    "start": "node dist/main.js",
-    "start:prod": "node dist/main.js"
+    "start": "cross-env NODE_OPTIONS=--max_old_space_size=400 node dist/main.js",
+    "start:prod": "cross-env NODE_OPTIONS=--max_old_space_size=400 node dist/main.js"
   },
   "dependencies": {
     "@consumet/extensions": "^1.8.8",
@@ -25,6 +25,7 @@
     "class-validator": "^0.14.1",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
+    "cross-env": "^10.1.0",
     "dotenv": "^16.4.5",
     "joi": "^18.2.3",
     "reflect-metadata": "^0.2.1",
