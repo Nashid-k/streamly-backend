@@ -18,8 +18,13 @@ async function bootstrap() {
   
   const defaultOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'https://streamly-gules.vercel.app', 'https://streamlyvercelin.vercel.app'];
   const frontendUrl = configService.get<string>('FRONTEND_URL');
+  
+  // Sanitize FRONTEND_URL to ensure users who forget to type "https://" in Render dashboard don't get blocked
   const envOrigins = frontendUrl 
-    ? frontendUrl.split(',').map(url => url.trim()).filter(Boolean)
+    ? frontendUrl.split(',')
+        .map(url => url.trim())
+        .filter(Boolean)
+        .map(url => url.startsWith('http') ? url : `https://${url}`)
     : [];
     
   const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envOrigins]));
