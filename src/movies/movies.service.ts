@@ -9,14 +9,6 @@ const LANGUAGE_NAMES: Record<string, string> = {
   pa: 'Punjabi', ta: 'Tamil', te: 'Telugu', zh: 'Mandarin',
 };
 
-const ANIME_OVERRIDES: Record<string, { tmdbSeason: number, startEp: number, endEp?: number }[]> = {
-  // Solo Leveling (127532): TMDB lumps 25 episodes in S1. Sources expect S1=1-12, S2=13-25.
-  '127532': [
-    { tmdbSeason: 1, startEp: 1, endEp: 12 },
-    { tmdbSeason: 1, startEp: 13, endEp: 25 }
-  ]
-};
-
 @Injectable()
 export class MoviesService implements OnModuleInit {
   private readonly logger = new Logger(MoviesService.name);
@@ -726,9 +718,6 @@ export class MoviesService implements OnModuleInit {
         if (details.number_of_seasons !== undefined || details.first_air_date) {
           movie.isSeries = true;
           movie.seasonsCount = details.number_of_seasons || 1;
-          if (ANIME_OVERRIDES[movie.tmdbId]) {
-            movie.seasonsCount = ANIME_OVERRIDES[movie.tmdbId].length;
-          }
         }
         
         const logoObj = details.images?.logos?.find((l: any) => l.iso_639_1 === 'en') || details.images?.logos?.[0];
@@ -846,9 +835,6 @@ export class MoviesService implements OnModuleInit {
 
         if (movie.isSeries) {
           movie.seasonsCount = details.number_of_seasons || 1;
-          if (ANIME_OVERRIDES[movie.tmdbId]) {
-            movie.seasonsCount = ANIME_OVERRIDES[movie.tmdbId].length;
-          }
         }
       } catch (err) {
         this.logger.warn(`Could not enrich metadata for ${id}: ${err}`);
@@ -889,33 +875,14 @@ export class MoviesService implements OnModuleInit {
       } catch (e) { this.logger.error('Failed to fetch featured movie logo', e); }
     }
     try {
-      const override = ANIME_OVERRIDES[movie.tmdbId];
-      let tmdbSeasonToFetch = seasonNumber;
-      let startEp = 1;
-      let endEp = Infinity;
-      let virtualSeasonNumber = seasonNumber;
-
-      if (override && override[seasonNumber - 1]) {
-        const conf = override[seasonNumber - 1];
-        tmdbSeasonToFetch = conf.tmdbSeason;
-        startEp = conf.startEp;
-        endEp = conf.endEp || Infinity;
-      }
+      const seasonData = await this.tmdb(`tv/${movie.tmdbId}/season/${seasonNumber}`);
       
-      const seasonData = await this.tmdb(`tv/${movie.tmdbId}/season/${tmdbSeasonToFetch}`);
-      
-      let rawEpisodes = seasonData.episodes || [];
-      if (override && override[seasonNumber - 1]) {
-        rawEpisodes = rawEpisodes.filter((ep: any) => ep.episode_number >= startEp && ep.episode_number <= endEp);
-      }
+      const rawEpisodes = seasonData.episodes || [];
 
       const episodes: Episode[] = rawEpisodes.map((ep: any) => {
-        // Calculate virtual episode number (e.g. TMDB ep 13 becomes virtual ep 1)
-        const virtualEpNum = override ? (ep.episode_number - startEp + 1) : ep.episode_number;
-
         const vl = 'primaryColor=E50914&secondaryColor=141414&iconColor=FFFFFF&nextButton=true&title=false&poster=false&autoplay=true';
-        const s = virtualSeasonNumber;
-        const e = virtualEpNum;
+        const s = seasonNumber;
+        const e = ep.episode_number;
         
         const vidLinkUrl = `https://vidlink.pro/tv/${movie.tmdbId}/${s}/${e}?${vl}`;
         
@@ -1126,6 +1093,24 @@ export class MoviesService implements OnModuleInit {
     }
 
     try {
+      // 1.5 Live TMDB Franchise Search (mixes Movies and TV shows for Anime/Franchises)
+      if (mainKeyword.length > 3) {
+        try {
+          const franchiseSearch = await this.tmdb('search/multi', { query: mainKeyword });
+          if (franchiseSearch && franchiseSearch.results) {
+            const franchiseHits = franchiseSearch.results
+              .filter((m: any) => (m.media_type === 'movie' || m.media_type === 'tv') && String(m.id) !== current.tmdbId)
+              .slice(0, 5)
+              .map((item: any) => this.toMovie(item, item.media_type));
+            
+            this.logger.log(`Franchise search found ${franchiseHits.length} hits for keyword: ${mainKeyword}`);
+            similar.push(...franchiseHits);
+          }
+        } catch(e) {
+            this.logger.error('Franchise search failed', e);
+        }
+      }
+
       const type = current.isSeries ? 'tv' : 'movie';
       // 2. TMDB Recommendations (Better for sequels/franchise)
       const recs = await this.tmdb(`${type}/${current.tmdbId}/recommendations`);
