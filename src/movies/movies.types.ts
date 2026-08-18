@@ -35,6 +35,7 @@ export interface Movie {
   matchScore: number;
   releaseYear: number;
   releaseDate?: string;
+  imdbRating?: number;
   isUpcoming?: boolean;
   isRecentlyAdded?: boolean;
   isLeavingSoon?: boolean;
@@ -46,7 +47,7 @@ export interface Movie {
   episodes?: Episode[];
   nextEpisode?: Episode;
   genres: string[];
-  cast: string[];
+  cast: any[];
   director: string;
   isOriginal?: boolean;
   isTrending?: boolean;

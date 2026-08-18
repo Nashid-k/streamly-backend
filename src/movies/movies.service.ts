@@ -283,6 +283,7 @@ export class MoviesService implements OnModuleInit {
       embedUrl: embedUrl,
       sources: sources,
       matchScore: Math.max(50, Math.round((item.vote_average || 0) * 10)),
+      imdbRating: item.vote_average ? Number.parseFloat(Number(item.vote_average).toFixed(1)) : 0,
       releaseYear: Number.parseInt(rawDate.slice(0, 4), 10) || new Date().getFullYear(),
       releaseDate: rawDate,
       isUpcoming: isUpcoming,
@@ -673,6 +674,22 @@ export class MoviesService implements OnModuleInit {
       if (internalId) movie = this.state[platform].movies.get(internalId);
     }
     
+    if (!movie && id.startsWith('tmdb-')) {
+      // Live TMDB Fallback for uncached items (e.g. from search)
+      this.logger.log(`Movie ${id} not in cache, fetching live from TMDB...`);
+      const isTv = id.includes('-tv-');
+      const tmdbIdStr = id.split('-').pop();
+      if (tmdbIdStr) {
+        try {
+          const details = await this.tmdb(`${isTv ? 'tv' : 'movie'}/${tmdbIdStr}`);
+          movie = this.toMovie(details, isTv ? 'tv' : 'movie');
+          this.state[platform].movies.set(movie.id, movie);
+          if (movie.tmdbId) this.state[platform].tmdbIdIndex.set(movie.tmdbId, movie.id);
+        } catch (e) {
+          this.logger.warn(`Live fetch failed for ${id}: ${e}`);
+        }
+      }
+    }
 
     if (!movie) throw new NotFoundException(`Title "${id}" was not found.`);
 
@@ -703,15 +720,38 @@ export class MoviesService implements OnModuleInit {
         // If TMDB doesn't have a trailer, OR if the trailer isn't in the original language (for non-English movies)
         const isMissingOrWrongLang = !bestVideo || (details.original_language !== 'en' && bestVideo.iso_639_1 !== details.original_language);
 
+        // Platform-aware language mapping: what language should we search for?
+        // For non-English originals (e.g. Malayalam), prefer the original language trailer.
+        // However if the platform (nprime/nflix) primarily serves Hindi and the movie is in its
+        // original language, the TMDB already has a tagged video — pick it. Only use yt-search as
+        // last resort and use the original title + original language name to be precise.
+        const origLangName = LANGUAGE_NAMES[details.original_language] || details.original_language;
+        const originalTitle = movie.originalTitle || movie.title;
+
         if (isMissingOrWrongLang) {
           try {
             const ytSearch = require('yt-search');
-            const origLangName = LANGUAGE_NAMES[details.original_language] || details.original_language;
-            const query = `${movie.title} official trailer ${origLangName}`;
+            // Prefer the original title over the localised one for precise YT matching
+            // e.g. for Drishyam 3 (original Malayalam) search "Drishyam 3 official trailer Malayalam"
+            // using the original title prevents picking up the wrong regional dub
+            const searchTitle = originalTitle !== movie.title ? originalTitle : movie.title;
+            const query = `${searchTitle} official trailer ${origLangName}`;
             this.logger.log(`TMDB lacks original language trailer. Fallback YT Search: ${query}`);
             const ytResult = await ytSearch(query);
             if (ytResult?.videos?.length > 0) {
-              movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${ytResult.videos[0].videoId}?autoplay=1`);
+              // Validate: the top result should plausibly match (title should contain part of the movie name)
+              const topVideo = ytResult.videos[0];
+              const titleLower = (topVideo.title || '').toLowerCase();
+              const movieNameLower = (searchTitle || '').toLowerCase().split(' ')[0];
+              const isPlausible = titleLower.includes(movieNameLower) || titleLower.includes('trailer') || titleLower.includes('teaser');
+              if (isPlausible) {
+                movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${topVideo.videoId}?autoplay=1`);
+              } else if (ytResult.videos.length > 1) {
+                // Try the second result as a fallback if first is not plausible
+                movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${ytResult.videos[1].videoId}?autoplay=1`);
+              } else if (bestVideo) {
+                movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${bestVideo.key}?autoplay=1`);
+              }
             } else if (bestVideo) {
               movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${bestVideo.key}?autoplay=1`);
             }
@@ -750,6 +790,7 @@ export class MoviesService implements OnModuleInit {
         if (tagsList.length) movie.tags = tagsList;
         
         const fullCast = (details.credits?.cast || []).slice(0, 10).map((c: any) => ({
+          id: c.id,
           name: c.name,
           character: c.character || 'Cast',
           profileUrl: c.profile_path ? `https://image.tmdb.org/t/p/w185${c.profile_path}` : null
@@ -911,17 +952,34 @@ export class MoviesService implements OnModuleInit {
           if (m.genres && m.genres.some(g => g.toLowerCase().includes(normalized))) score += 5;
           if (m.tags && m.tags.some(g => g.toLowerCase().includes(normalized))) score += 3;
           
-          if (m.cast && m.cast.some((c: any) => typeof c === 'string' ? c.toLowerCase().includes(normalized) : c.name?.toLowerCase().includes(normalized))) score += 8;
-          if (m.director && m.director.toLowerCase().includes(normalized)) score += 8;
-          if (m.description && m.description.toLowerCase().includes(normalized)) score += 1;
+          const castStr = m.cast ? m.cast.map((c: any) => typeof c === 'string' ? c : c.name).join(' ').toLowerCase() : '';
+          const dirStr = m.director ? m.director.toLowerCase() : '';
+          const descStr = m.description ? m.description.toLowerCase() : '';
           
-          // Fuzzy token matching
-          const tokens = normalized.split(/[\s-]+/).filter(Boolean);
+          if (castStr.includes(normalized)) score += 8;
+          if (dirStr.includes(normalized)) score += 8;
+          if (descStr.includes(normalized)) score += 1;
+          
+          // Enhanced Fuzzy Token Matching across all metadata
+          const tokens = normalized.split(/[\s'’:\-]+/).filter(Boolean);
           if (tokens.length > 0) {
-             const titleTokens = t.split(/[\s-]+/);
-             const matchedTokens = tokens.filter(tk => titleTokens.some(ttk => ttk.includes(tk)));
-             if (matchedTokens.length === tokens.length) score += 15;
-             else if (matchedTokens.length > 0) score += (matchedTokens.length * 2);
+             const searchCorpus = `${t} ${m.originalTitle || ''} ${dirStr} ${castStr} ${m.releaseYear || m.year || ''} ${descStr}`;
+             
+             let matchedTokensCount = 0;
+             for (const token of tokens) {
+               if (searchCorpus.includes(token)) {
+                 matchedTokensCount++;
+                 // Give extra weight if the token is in the title or director
+                 if (t.includes(token) || dirStr.includes(token)) {
+                   score += 3;
+                 } else {
+                   score += 1;
+                 }
+               }
+             }
+             
+             if (matchedTokensCount === tokens.length) score += 25; // All words match something!
+             else if (matchedTokensCount > 0) score += (matchedTokensCount * 2);
           }
 
           return { movie: m, score };
@@ -936,9 +994,10 @@ export class MoviesService implements OnModuleInit {
 
       // ────────────────────────────────────────────────────────────
       // LIVE TMDB FALLBACK SEARCH
-      // If local search returns 0 results, query TMDB live for niche/regional content
+      // If local search returns 0 results or weak matches, query TMDB live
       // ────────────────────────────────────────────────────────────
-      if (results.length === 0 && normalized.length > 2) {
+      const hasStrongLocalMatch = resultsWithScores.length > 0 && resultsWithScores[0].score >= 20;
+      if (!hasStrongLocalMatch && normalized.length > 2) {
         this.logger.log(`Live TMDB Fallback Search triggered for: "${query}"`);
         try {
           const tmdbSearch = await this.tmdb('search/multi', { query: normalized });
@@ -969,7 +1028,10 @@ export class MoviesService implements OnModuleInit {
                 this.state[platform].movies.set(movieObj.id, movieObj);
                 this.state[platform].tmdbIdIndex.set(movieObj.tmdbId!, movieObj.id);
                 
-                results.push(movieObj);
+                // Prioritize live TMDB results over weak local matches and prevent duplicates
+                if (!results.some(r => r.tmdbId === movieObj.tmdbId)) {
+                  results.unshift(movieObj);
+                }
               }
             }
           }
@@ -1001,7 +1063,51 @@ export class MoviesService implements OnModuleInit {
   async getSimilarMovies(id: string, platform: 'nflix' | 'nprime' | 'hotstar' = 'nflix') {
     await this.ensureCatalog(platform);
     const current = await this.getMovieById(id, platform);
-    return (await this.getAllMovies(platform)).filter((item) => item.id !== current.id && item.genres.some((genre) => current.genres.includes(genre))).slice(0, 6);
+    const allMovies = await this.getAllMovies(platform);
+    let similar: Movie[] = [];
+
+    // 1. Franchise/Sequel exact matching (e.g., "Spider-Man")
+    const titleParts = current.title.split(/[:\-]/);
+    const mainKeyword = titleParts[0].trim().toLowerCase();
+    if (mainKeyword.length > 3) {
+      const titleMatches = allMovies.filter(m => 
+        m.id !== current.id && 
+        m.title.toLowerCase().includes(mainKeyword)
+      );
+      similar.push(...titleMatches);
+    }
+
+    try {
+      const type = current.isSeries ? 'tv' : 'movie';
+      // 2. TMDB Recommendations (Better for sequels/franchise)
+      const recs = await this.tmdb(`${type}/${current.tmdbId}/recommendations`);
+      if (recs && recs.results) {
+        similar.push(...recs.results.slice(0, 8).map((item: any) => this.toMovie(item, type)));
+      }
+      // 3. TMDB Similar (General vibe)
+      const sim = await this.tmdb(`${type}/${current.tmdbId}/similar`);
+      if (sim && sim.results) {
+        similar.push(...sim.results.slice(0, 8).map((item: any) => this.toMovie(item, type)));
+      }
+    } catch (e) {
+      this.logger.warn(`Failed to fetch true similar movies for ${id}: ${e}`);
+    }
+
+    // 4. Fallback local genre logic
+    const genreMatches = allMovies.filter(item => 
+      item.id !== current.id && item.genres.some((genre) => current.genres.includes(genre))
+    ).slice(0, 10);
+    similar.push(...genreMatches);
+
+    // Deduplicate by ID
+    const uniqueMap = new Map();
+    similar.forEach(m => {
+      if (!uniqueMap.has(m.id) && m.id !== current.id) {
+        uniqueMap.set(m.id, m);
+      }
+    });
+
+    return Array.from(uniqueMap.values()).slice(0, 16);
   }
 
   // ─── Advanced Recommendations Engine ──────────────────────────────────
@@ -1118,9 +1224,35 @@ export class MoviesService implements OnModuleInit {
         }
       }
     } catch (e) {
-      this.logger.warn(`Failed to fetch magnet for ${title}: ${e.message}`);
+      this.logger.warn(`Failed to fetch magnet link for ${title}: ${e}`);
+      return '';
     }
-    return '';
+  }
+
+  async getPersonDetails(personId: string) {
+    try {
+      const details = await this.tmdb(`person/${personId}`, {
+        append_to_response: 'combined_credits'
+      });
+      
+      const credits = (details.combined_credits?.cast || [])
+        .sort((a: any, b: any) => (b.vote_count || 0) - (a.vote_count || 0))
+        .slice(0, 24)
+        .map((item: any) => this.toMovie(item, item.media_type || 'movie'));
+
+      return {
+        id: details.id,
+        name: details.name,
+        biography: details.biography,
+        profileUrl: details.profile_path ? this.image(details.profile_path, 'w500') : null,
+        knownFor: details.known_for_department,
+        birthday: details.birthday,
+        placeOfBirth: details.place_of_birth,
+        credits
+      };
+    } catch (e) {
+      this.logger.error(`Failed to fetch person details for ${personId}`, e);
+      throw e;
+    }
   }
 }
-

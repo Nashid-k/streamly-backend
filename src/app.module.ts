@@ -3,6 +3,7 @@ import { CacheModule } from '@nestjs/cache-manager';
 import { MoviesModule } from './movies/movies.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+import { AppController } from './app.controller';
 
 import * as Joi from 'joi';
 import { ConfigModule } from '@nestjs/config';
@@ -36,5 +37,6 @@ const cacheConfig = CacheModule.register({
     UsersModule,
     AuthModule,
   ],
+  controllers: [AppController],
 })
 export class AppModule {}

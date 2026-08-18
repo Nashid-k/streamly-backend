@@ -60,7 +60,7 @@ export class MoviesController {
     @Query('genre') genre?: string,
     @Query('platform') platform: 'nflix' | 'nprime' | 'hotstar' = 'nflix'
   ): Promise<{ movies: Movie[]; actor?: any }> {
-    res.setHeader('Cache-Control', 'private, max-age=30');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     const safeQuery = (query || '').slice(0, 200);
     const result = await this.moviesService.searchMovies(safeQuery, genre, platform);
     return result;
@@ -75,6 +75,15 @@ export class MoviesController {
     setCache(res, 86400); // 24-hour cache for magnet links
     const magnet = await this.moviesService.getMagnetLink(title, year);
     return { magnet };
+  }
+
+  @Get('person/:personId')
+  async getPerson(
+    @Res({ passthrough: true }) res: Response,
+    @Param('personId') personId: string
+  ) {
+    setCache(res, 86400); // 24-hour cache
+    return this.moviesService.getPersonDetails(personId);
   }
 
   @Get(':id')
