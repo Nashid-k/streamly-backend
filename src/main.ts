@@ -16,7 +16,7 @@ async function bootstrap() {
   
   app.use(compression());
   
-  const defaultOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'https://streamly-gules.vercel.app', 'https://streamlyvercelin.vercel.app'];
+  const defaultOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'];
   const frontendUrl = configService.get<string>('FRONTEND_URL');
   
   // Sanitize FRONTEND_URL to ensure users who forget to type "https://" in Render dashboard don't get blocked
