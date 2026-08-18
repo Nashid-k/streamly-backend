@@ -963,7 +963,7 @@ export class MoviesService implements OnModuleInit {
           // Enhanced Fuzzy Token Matching across all metadata
           const tokens = normalized.split(/[\s'’:\-]+/).filter(Boolean);
           if (tokens.length > 0) {
-             const searchCorpus = `${t} ${m.originalTitle || ''} ${dirStr} ${castStr} ${m.releaseYear || m.year || ''} ${descStr}`;
+             const searchCorpus = `${t} ${m.originalTitle || ''} ${dirStr} ${castStr} ${m.releaseYear || ''} ${descStr}`;
              
              let matchedTokensCount = 0;
              for (const token of tokens) {
