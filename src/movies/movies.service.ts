@@ -9,6 +9,14 @@ const LANGUAGE_NAMES: Record<string, string> = {
   pa: 'Punjabi', ta: 'Tamil', te: 'Telugu', zh: 'Mandarin',
 };
 
+const ANIME_OVERRIDES: Record<string, { tmdbSeason: number, startEp: number, endEp?: number }[]> = {
+  // Solo Leveling (127532): TMDB lumps 25 episodes in S1. Sources expect S1=1-12, S2=13-25.
+  '127532': [
+    { tmdbSeason: 1, startEp: 1, endEp: 12 },
+    { tmdbSeason: 1, startEp: 13, endEp: 25 }
+  ]
+};
+
 @Injectable()
 export class MoviesService implements OnModuleInit {
   private readonly logger = new Logger(MoviesService.name);
@@ -718,6 +726,9 @@ export class MoviesService implements OnModuleInit {
         if (details.number_of_seasons !== undefined || details.first_air_date) {
           movie.isSeries = true;
           movie.seasonsCount = details.number_of_seasons || 1;
+          if (ANIME_OVERRIDES[movie.tmdbId]) {
+            movie.seasonsCount = ANIME_OVERRIDES[movie.tmdbId].length;
+          }
         }
         
         const logoObj = details.images?.logos?.find((l: any) => l.iso_639_1 === 'en') || details.images?.logos?.[0];
@@ -835,6 +846,9 @@ export class MoviesService implements OnModuleInit {
 
         if (movie.isSeries) {
           movie.seasonsCount = details.number_of_seasons || 1;
+          if (ANIME_OVERRIDES[movie.tmdbId]) {
+            movie.seasonsCount = ANIME_OVERRIDES[movie.tmdbId].length;
+          }
         }
       } catch (err) {
         this.logger.warn(`Could not enrich metadata for ${id}: ${err}`);
@@ -874,37 +888,61 @@ export class MoviesService implements OnModuleInit {
         movie = this.state[platform].movies.get(id) || movie;
       } catch (e) { this.logger.error('Failed to fetch featured movie logo', e); }
     }
-
     try {
-      const seasonData = await this.tmdb(`tv/${movie.tmdbId}/season/${seasonNumber}`);
-      const episodes: Episode[] = (seasonData.episodes || []).map((ep: any) => {
+      const override = ANIME_OVERRIDES[movie.tmdbId];
+      let tmdbSeasonToFetch = seasonNumber;
+      let startEp = 1;
+      let endEp = Infinity;
+      let virtualSeasonNumber = seasonNumber;
+
+      if (override && override[seasonNumber - 1]) {
+        const conf = override[seasonNumber - 1];
+        tmdbSeasonToFetch = conf.tmdbSeason;
+        startEp = conf.startEp;
+        endEp = conf.endEp || Infinity;
+      }
+      
+      const seasonData = await this.tmdb(`tv/${movie.tmdbId}/season/${tmdbSeasonToFetch}`);
+      
+      let rawEpisodes = seasonData.episodes || [];
+      if (override && override[seasonNumber - 1]) {
+        rawEpisodes = rawEpisodes.filter((ep: any) => ep.episode_number >= startEp && ep.episode_number <= endEp);
+      }
+
+      const episodes: Episode[] = rawEpisodes.map((ep: any) => {
+        // Calculate virtual episode number (e.g. TMDB ep 13 becomes virtual ep 1)
+        const virtualEpNum = override ? (ep.episode_number - startEp + 1) : ep.episode_number;
+
         const vl = 'primaryColor=E50914&secondaryColor=141414&iconColor=FFFFFF&nextButton=true&title=false&poster=false&autoplay=true';
-        const vidLinkUrl = `https://vidlink.pro/tv/${movie.tmdbId}/${seasonNumber}/${ep.episode_number}?${vl}`;
+        const s = virtualSeasonNumber;
+        const e = virtualEpNum;
+        
+        const vidLinkUrl = `https://vidlink.pro/tv/${movie.tmdbId}/${s}/${e}?${vl}`;
         
         return {
-          id: `ep-${movie.tmdbId}-${seasonNumber}-${ep.episode_number}`,
-          title: ep.name || `Episode ${ep.episode_number}`,
+          id: `ep-${movie.tmdbId}-${s}-${e}`,
+          title: ep.name || `Episode ${e}`,
           description: ep.overview || '',
-          duration: ep.runtime ? `${ep.runtime}m` : '45m',
-          episodeNumber: ep.episode_number,
-          seasonNumber: seasonNumber,
+          duration: ep.runtime ? `${ep.runtime}m` : '24m',
+          episodeNumber: e,
+          seasonNumber: s,
           thumbnailUrl: this.image(ep.still_path) || movie.backdropUrl,
-          videoUrl: this.encodeUrl(`https://vidsrc.pm/embed/tv/${movie.tmdbId}/${seasonNumber}/${ep.episode_number}`),
-          embedUrl: this.encodeUrl(`https://vidsrc.pm/embed/tv/${movie.tmdbId}/${seasonNumber}/${ep.episode_number}`),
+          videoUrl: this.encodeUrl(`https://vidsrc.pm/embed/tv/${movie.tmdbId}/${s}/${e}`),
+          embedUrl: this.encodeUrl(`https://vidsrc.pm/embed/tv/${movie.tmdbId}/${s}/${e}`),
           sources: [
             { name: 'VidLink',     url: vidLinkUrl,                                                                                                              type: 'stream' as const },
-            { name: 'AutoEmbed',   url: `https://autoembed.co/tv/tmdb/${movie.tmdbId}-${seasonNumber}-${ep.episode_number}`,                                     type: 'stream' as const },
-            { name: 'VidSrc.pro',  url: `https://vidsrc.pro/embed/tv/${movie.tmdbId}/${seasonNumber}/${ep.episode_number}`,                                      type: 'stream' as const },
-            { name: 'VidSrc.cc',   url: `https://vidsrc.cc/v2/embed/tv/${movie.tmdbId}/${seasonNumber}/${ep.episode_number}`,                                    type: 'stream' as const },
-            { name: 'Embed.su',    url: `https://embed.su/embed/tv/${movie.tmdbId}/${seasonNumber}/${ep.episode_number}`,                                        type: 'stream' as const },
-            { name: '2Embed (Cineby)', url: `https://www.2embed.cc/embed/${movie.tmdbId}/${seasonNumber}/${ep.episode_number}`,                                  type: 'stream' as const },
-            { name: 'VidSrc',      url: `https://vidsrc.pm/embed/tv/${movie.tmdbId}/${seasonNumber}/${ep.episode_number}`,                                       type: 'stream' as const },
-            { name: 'Mapple (4KHD)',   url: `https://www.2embed.cc/embed/${movie.tmdbId}/${seasonNumber}/${ep.episode_number}#mapple`,                           type: 'stream' as const },
-            { name: 'Main',        url: `https://multiembed.mov/directstream.php?video_id=${movie.tmdbId}&tmdb=1&s=${seasonNumber}&e=${ep.episode_number}`,      type: 'stream' as const },
-            { name: 'Prime',       url: `https://primestream.io/embed/tv/${movie.tmdbId}/${seasonNumber}/${ep.episode_number}`,                                  type: 'stream' as const }
-        ].map(s => ({ ...s, url: this.encodeUrl(s.url) }))
-      };
-    });
+            { name: 'AutoEmbed',   url: `https://autoembed.co/tv/tmdb/${movie.tmdbId}/${s}/${e}`,                                     type: 'stream' as const },
+            { name: 'VidSrc.pro',  url: `https://vidsrc.pro/embed/tv/${movie.tmdbId}/${s}/${e}`,                                      type: 'stream' as const },
+            { name: 'VidSrc.cc',   url: `https://vidsrc.cc/v2/embed/tv/${movie.tmdbId}/${s}/${e}`,                                    type: 'stream' as const },
+            { name: 'Embed.su',    url: `https://embed.su/embed/tv/${movie.tmdbId}/${s}/${e}`,                                        type: 'stream' as const },
+            { name: '2Embed (Cineby)', url: `https://www.2embed.cc/embed/${movie.tmdbId}/${s}/${e}`,                                  type: 'stream' as const },
+            { name: 'VidSrc',      url: `https://vidsrc.pm/embed/tv/${movie.tmdbId}/${s}/${e}`,                                       type: 'stream' as const },
+            { name: 'Mapple (4KHD)',   url: `https://www.2embed.cc/embed/${movie.tmdbId}/${s}/${e}#mapple`,                           type: 'stream' as const },
+            { name: 'Main',        url: `https://multiembed.mov/directstream.php?video_id=${movie.tmdbId}&tmdb=1&s=${s}&e=${e}`,      type: 'stream' as const },
+            { name: 'Prime',       url: `https://primestream.io/embed/tv/${movie.tmdbId}/${s}/${e}`,                                  type: 'stream' as const }
+        ].map(src => ({ ...src, url: this.encodeUrl(src.url) }))
+        };  
+      });
       return episodes;
     } catch (err) {
       this.logger.warn(`Failed to load season ${seasonNumber} for ${id}: ${err}`);
