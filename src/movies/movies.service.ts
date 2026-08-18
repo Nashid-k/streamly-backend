@@ -1018,20 +1018,18 @@ export class MoviesService implements OnModuleInit {
               if (allProviderIds.includes(this.providerMap['nprime'])) availableOn.push('Prime Video');
               if (allProviderIds.includes(this.providerMap['hotstar'])) availableOn.push('Hotstar');
 
-              // If it's available on at least one tracked platform OR if we just want to force it to show up 
-              // (Since users want to find it, we can show it and state where it's available)
-              if (availableOn.length > 0 || allProviderIds.length > 0) {
-                const movieObj = this.toMovie(hit, hit.media_type);
-                movieObj.availablePlatforms = availableOn.length > 0 ? availableOn : ['Other'];
-                
-                // Cache into local memory so /movie/:id works when clicked
-                this.state[platform].movies.set(movieObj.id, movieObj);
-                this.state[platform].tmdbIdIndex.set(movieObj.tmdbId!, movieObj.id);
-                
-                // Prioritize live TMDB results over weak local matches and prevent duplicates
-                if (!results.some(r => r.tmdbId === movieObj.tmdbId)) {
-                  results.unshift(movieObj);
-                }
+              // Remove the strict provider requirement for explicit searches.
+              // If a user actively searches for it and TMDB finds it, we should ALWAYS show it.
+              const movieObj = this.toMovie(hit, hit.media_type);
+              movieObj.availablePlatforms = availableOn.length > 0 ? availableOn : ['Other'];
+              
+              // Cache into local memory so /movie/:id works when clicked
+              this.state[platform].movies.set(movieObj.id, movieObj);
+              this.state[platform].tmdbIdIndex.set(movieObj.tmdbId!, movieObj.id);
+              
+              // Prioritize live TMDB results over weak local matches and prevent duplicates
+              if (!results.some(r => r.tmdbId === movieObj.tmdbId)) {
+                results.unshift(movieObj);
               }
             }
           }
