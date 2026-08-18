@@ -17,7 +17,7 @@ async function bootstrap() {
   app.use(compression());
   
   const envOrigins = (configService.get<string>('FRONTEND_URL') || '').split(',');
-  const defaultOrigins = ['http://localhost:3000', 'https://streamly-gules.vercel.app'];
+  const defaultOrigins = ['http://localhost:3000', 'http://localhost:3001', 'https://streamly-gules.vercel.app', 'https://streamlyvercelin.vercel.app'];
   const allowedOrigins = [...envOrigins, ...defaultOrigins]
     .map((origin) => origin.trim())
     .filter(Boolean);
