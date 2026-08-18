@@ -597,23 +597,29 @@ export class MoviesService implements OnModuleInit {
       .slice(0, 10)
       .map(m => this.toLightweightMovie(m) as Movie);
   }
-  async getFeaturedMovie(platform: 'nflix' | 'nprime' | 'hotstar' = 'nflix'): Promise<Movie | null> {
+
+  async getFeaturedMovie(platform: 'nflix' | 'nprime' | 'hotstar' = 'nflix'): Promise<Movie[]> {
     await this.ensureCatalog(platform);
-    const feat = this.state[platform].categories[0]?.movies[0] || null;
-    if (feat && !feat.logoUrl) {
-      try {
-        const mediaType = feat.isSeries ? 'tv' : 'movie';
-        const details = await this.tmdb(`${mediaType}/${feat.tmdbId}`, { 
-          append_to_response: 'images',
-          include_image_language: 'en,null,ja,ko,zh,hi,ta,te,ml,kn,fr,es,de,it,pt,ru,ar,tr,th'
-        });
-        const logoObj = details.images?.logos?.find((l: any) => l.iso_639_1 === 'en') || details.images?.logos?.[0];
-        if (logoObj?.file_path) {
-          feat.logoUrl = this.image(logoObj.file_path, 'w500');
-        }
-      } catch (e) { this.logger.error('Failed to fetch featured movie logo', e); }
-    }
-    return feat;
+    const trendingMovies = this.state[platform].categories.find(c => c.id === 'trending-movies')?.movies.slice(0, 10) || [];
+    const trendingSeries = this.state[platform].categories.find(c => c.id === 'trending-series')?.movies.slice(0, 10) || [];
+    const topMovies = [...trendingMovies, ...trendingSeries];
+    
+    await Promise.all(topMovies.map(async (feat) => {
+      if (feat && !feat.logoUrl) {
+        try {
+          const mediaType = feat.isSeries ? 'tv' : 'movie';
+          const details = await this.tmdb(`${mediaType}/${feat.tmdbId}`, { 
+            append_to_response: 'images',
+            include_image_language: 'en,null,ja,ko,zh,hi,ta,te,ml,kn,fr,es,de,it,pt,ru,ar,tr,th'
+          });
+          const logoObj = details.images?.logos?.find((l: any) => l.iso_639_1 === 'en') || details.images?.logos?.[0];
+          if (logoObj?.file_path) {
+            feat.logoUrl = this.image(logoObj.file_path, 'w500');
+          }
+        } catch (e) { this.logger.error('Failed to fetch featured movie logo', e); }
+      }
+    }));
+    return topMovies;
   }
   async getCategories(platform: 'nflix' | 'nprime' | 'hotstar' = 'nflix'): Promise<Category[]> {
     await this.ensureCatalog(platform);

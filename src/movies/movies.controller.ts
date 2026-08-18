@@ -30,7 +30,7 @@ export class MoviesController {
   async getFeatured(
     @Res({ passthrough: true }) res: Response,
     @Query('platform') platform: 'nflix' | 'nprime' | 'hotstar' = 'nflix'
-  ): Promise<Movie | null> {
+  ): Promise<Movie[]> {
     setCache(res, 120);
     return this.moviesService.getFeaturedMovie(platform);
   }
