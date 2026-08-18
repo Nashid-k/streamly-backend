@@ -16,10 +16,13 @@ async function bootstrap() {
   
   app.use(compression());
   
+  const defaultOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'https://streamly-gules.vercel.app', 'https://streamlyvercelin.vercel.app'];
   const frontendUrl = configService.get<string>('FRONTEND_URL');
-  const allowedOrigins = frontendUrl 
+  const envOrigins = frontendUrl 
     ? frontendUrl.split(',').map(url => url.trim()).filter(Boolean)
-    : ['http://localhost:3000', 'http://localhost:3001', 'https://streamly-gules.vercel.app', 'https://streamlyvercelin.vercel.app'];
+    : [];
+    
+  const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envOrigins]));
 
   // Keep browser access scoped to this application's frontend.
   app.enableCors({
