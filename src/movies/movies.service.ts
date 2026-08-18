@@ -1015,6 +1015,7 @@ export class MoviesService implements OnModuleInit {
             // Take top 5 to minimize N+1 provider lookups
             const topHits = tmdbSearch.results.slice(0, 5).filter((m: any) => m.media_type === 'movie' || m.media_type === 'tv');
             
+            const liveResults: Movie[] = [];
             for (const hit of topHits) {
               const providers = await this.tmdb(`${hit.media_type}/${hit.id}/watch/providers`).catch(() => null);
               
@@ -1037,11 +1038,12 @@ export class MoviesService implements OnModuleInit {
               this.state[platform].movies.set(movieObj.id, movieObj);
               this.state[platform].tmdbIdIndex.set(movieObj.tmdbId!, movieObj.id);
               
-              // Prioritize live TMDB results over weak local matches and prevent duplicates
-              if (!results.some(r => r.tmdbId === movieObj.tmdbId)) {
-                results.unshift(movieObj);
-              }
+              liveResults.push(movieObj);
             }
+            
+            // Prioritize live TMDB results over weak local matches and prevent duplicates, preserving TMDB's relevance order
+            const uniqueLiveResults = liveResults.filter(lr => !results.some(r => r.tmdbId === lr.tmdbId));
+            results.unshift(...uniqueLiveResults);
           }
         } catch (e) {
           this.logger.error('TMDB Live Fallback Search failed: ' + (e instanceof Error ? e.message : String(e)));
