@@ -392,6 +392,9 @@ export class MoviesService implements OnModuleInit {
 
       // 3. Anime Domain
       { id: 'trending-anime', name: 'Trending Anime', mediaType: 'tv', path: `discover/tv?${baseDiscoverTv}&with_genres=16&with_original_language=ja&sort_by=popularity.desc&first_air_date.gte=${recentDateIso}&first_air_date.lte=${today}` },
+      { id: 'popular-anime', name: 'Popular Anime Series', mediaType: 'tv', path: `discover/tv?${baseDiscoverTv}&with_genres=16&with_original_language=ja&sort_by=popularity.desc` },
+      { id: 'top-rated-anime', name: 'Top Rated Anime', mediaType: 'tv', path: `discover/tv?${baseDiscoverTv}&with_genres=16&with_original_language=ja&sort_by=vote_average.desc&vote_count.gte=500` },
+      { id: 'anime-movies', name: 'Anime Movies', mediaType: 'movie', path: `discover/movie?${baseDiscoverMovie}&with_genres=16&with_original_language=ja&sort_by=popularity.desc` },
       
       // 4. Dynamic Editorial Genres
       ...shuffledCurated,
@@ -602,7 +605,8 @@ export class MoviesService implements OnModuleInit {
     await this.ensureCatalog(platform);
     const trendingMovies = this.state[platform].categories.find(c => c.id === 'trending-movies')?.movies.slice(0, 10) || [];
     const trendingSeries = this.state[platform].categories.find(c => c.id === 'trending-series')?.movies.slice(0, 10) || [];
-    const topMovies = [...trendingMovies, ...trendingSeries];
+    const trendingAnime = this.state[platform].categories.find(c => c.id === 'trending-anime')?.movies.slice(0, 5) || [];
+    const topMovies = [...trendingMovies, ...trendingSeries, ...trendingAnime];
     
     await Promise.all(topMovies.map(async (feat) => {
       if (feat && !feat.logoUrl) {
