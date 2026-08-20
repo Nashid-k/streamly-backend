@@ -449,35 +449,6 @@ export class MoviesService implements OnModuleInit {
         });
         let titlesArr = Array.from(uniqueTitles.values());
 
-        // STRICT CAM-RIP FILTER:
-        // For movies released in the last 150 days, explicitly verify they have a Digital/Physical release.
-        if (rail.mediaType === 'movie' && !isUpcomingRail) {
-          const now = Date.now();
-          const suspiciousMovies = titlesArr.filter(m => {
-             if (!m.releaseDate) return false;
-             const rTime = new Date(m.releaseDate).getTime();
-             const daysSinceRelease = (now - rTime) / (1000 * 60 * 60 * 24);
-             // If the movie released within the last 150 days (or is marked as past but still very new)
-             return daysSinceRelease >= 0 && daysSinceRelease <= 150;
-          });
-
-          if (suspiciousMovies.length > 0) {
-            // Process in chunks of 10 to avoid hitting rate limits too hard
-            for (let i = 0; i < suspiciousMovies.length; i += 10) {
-              const chunk = suspiciousMovies.slice(i, i + 10);
-              const results = await Promise.all(
-                chunk.map(m => this.verifyOttRelease(m.tmdbId).then(valid => ({ id: m.id, valid })))
-              );
-              
-              const invalidIds = new Set(results.filter(r => !r.valid).map(r => r.id));
-              if (invalidIds.size > 0) {
-                titlesArr = titlesArr.filter(m => !invalidIds.has(m.id));
-                for (const id of invalidIds) loadedMovies.delete(id);
-              }
-            }
-          }
-        }
-
         let titles: Movie[];
         if (isUpcomingRail) {
           let upcomingTitles = titlesArr.filter((movie) => movie.isUpcoming);
