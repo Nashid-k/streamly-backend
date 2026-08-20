@@ -1180,31 +1180,6 @@ export class MoviesService implements OnModuleInit {
     }
   }
 
-  async getMagnetLink(title: string, year: string): Promise<string> {
-    try {
-      const query = encodeURIComponent(`${title} ${year} 1080p multi`);
-      const response = await fetch(`https://apibay.org/q.php?q=${query}`);
-      const data = await response.json();
-      
-      if (data && data.length > 0 && data[0].info_hash && data[0].info_hash !== '0000000000000000000000000000000000000000') {
-        const hash = data[0].info_hash;
-        return `magnet:?xt=urn:btih:${hash}&tr=udp://tracker.opentrackr.org:1337/announce`;
-      } else {
-        // Fallback to non-multi search
-        const fbQuery = encodeURIComponent(`${title} ${year} 1080p`);
-        const fbResponse = await fetch(`https://apibay.org/q.php?q=${fbQuery}`);
-        const fbData = await fbResponse.json();
-        if (fbData && fbData.length > 0 && fbData[0].info_hash && fbData[0].info_hash !== '0000000000000000000000000000000000000000') {
-          const hash = fbData[0].info_hash;
-          return `magnet:?xt=urn:btih:${hash}&tr=udp://tracker.opentrackr.org:1337/announce`;
-        }
-      }
-    } catch (e) {
-      this.logger.warn(`Failed to fetch magnet link for ${title}: ${e}`);
-      return '';
-    }
-  }
-
   async getPersonDetails(personId: string) {
     try {
       const details = await this.tmdb(`person/${personId}`, {
