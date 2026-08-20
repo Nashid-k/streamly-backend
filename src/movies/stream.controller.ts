@@ -124,5 +124,11 @@ export class StreamController {
       res.writeHead(200, head);
       file.createReadStream().pipe(res);
     }
+
+    req.on('close', () => {
+      console.log(`Client disconnected, cleaning up engine for magnet: ${magnet}`);
+      this.engines.delete(magnet);
+      if (engine) engine.destroy();
+    });
   }
 }

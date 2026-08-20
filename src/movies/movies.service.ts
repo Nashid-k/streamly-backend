@@ -30,6 +30,7 @@ export class MoviesService implements OnModuleInit {
   private readonly refreshRetryMs = this.parsePositiveInt(process.env.TMDB_REFRESH_RETRY_MS, 15_000, 1_000, 300_000);
   private readonly genres = new Map<number, string>();
   private lastCatalogError: string | undefined;
+  private readonly seasonEpisodesCache = new Map<string, Episode[]>();
 
   private state = {
     nflix: { movies: new Map<string, Movie>(), tmdbIdIndex: new Map<string, string>(), titleIndex: new Map<string, string[]>(), genreIndex: new Map<string, string[]>(), categories: [] as Category[], realRecentlyAddedTmdbIds: new Set<string>(), realLeavingSoonTmdbIds: new Set<string>(), lastRefreshAttemptAt: 0, refreshInFlight: null as Promise<void> | null, searchCache: new Map<string, { movies: Movie[]; actor?: any }>() },
@@ -220,41 +221,7 @@ export class MoviesService implements OnModuleInit {
 
     const tmdbIdStr = String(item.id);
     const isTV = mediaType === 'tv' || Boolean(item.first_air_date || item.number_of_seasons || item.number_of_episodes);
-    const rawEmbedUrl = isTV
-      ? `https://www.2embed.cc/embed/${tmdbIdStr}/1/1`
-      : `https://www.2embed.cc/embed/${tmdbIdStr}`;
-    const embedUrl = this.encodeUrl(rawEmbedUrl);
-
     const isAnime = (item.original_language === 'ja' || item.origin_country?.includes('JP')) && (item.genre_ids || []).includes(16);
-
-    // VidLink params: brand it red like Netflix, show next-episode button, show title
-    const vl = 'primaryColor=E50914&secondaryColor=141414&iconColor=FFFFFF&nextButton=true&title=false&poster=false&autoplay=true';
-
-    const rawSources = isTV ? [
-      { name: 'VidLink',     url: `https://vidlink.pro/tv/${tmdbIdStr}/1/1?${vl}`,                                           type: 'stream' as const },
-      { name: 'AutoEmbed',   url: `https://autoembed.co/tv/tmdb/${tmdbIdStr}-1-1`,                                           type: 'stream' as const },
-      { name: 'VidSrc.pro',  url: `https://vidsrc.pro/embed/tv/${tmdbIdStr}/1/1`,                                            type: 'stream' as const },
-      { name: 'VidSrc.cc',   url: `https://vidsrc.cc/v2/embed/tv/${tmdbIdStr}/1/1`,                                          type: 'stream' as const },
-      { name: 'Embed.su',    url: `https://embed.su/embed/tv/${tmdbIdStr}/1/1`,                                              type: 'stream' as const },
-      { name: '2Embed (Cineby)', url: `https://www.2embed.cc/embed/${tmdbIdStr}/1/1`,                                       type: 'stream' as const },
-      { name: 'VidSrc',      url: `https://vidsrc.pm/embed/tv/${tmdbIdStr}/1/1`,                                            type: 'stream' as const },
-      { name: 'Mapple (4KHD)',   url: `https://www.2embed.cc/embed/${tmdbIdStr}/1/1#mapple`,                                type: 'stream' as const },
-      { name: 'Main',        url: `https://multiembed.mov/directstream.php?video_id=${tmdbIdStr}&tmdb=1&s=1&e=1`,            type: 'stream' as const },
-      { name: 'Prime',       url: `https://primestream.io/embed/tv/${tmdbIdStr}/1/1`,                                        type: 'stream' as const }
-    ] : [
-      { name: 'VidLink',     url: `https://vidlink.pro/movie/${tmdbIdStr}?${vl}`,                                            type: 'stream' as const },
-      { name: 'AutoEmbed',   url: `https://autoembed.co/movie/tmdb/${tmdbIdStr}`,                                            type: 'stream' as const },
-      { name: 'VidSrc.pro',  url: `https://vidsrc.pro/embed/movie/${tmdbIdStr}`,                                             type: 'stream' as const },
-      { name: 'VidSrc.cc',   url: `https://vidsrc.cc/v2/embed/movie/${tmdbIdStr}`,                                           type: 'stream' as const },
-      { name: 'Embed.su',    url: `https://embed.su/embed/movie/${tmdbIdStr}`,                                               type: 'stream' as const },
-      { name: '2Embed (Cineby)', url: `https://www.2embed.cc/embed/${tmdbIdStr}`,                                          type: 'stream' as const },
-      { name: 'VidSrc',      url: `https://vidsrc.pm/embed/movie/${tmdbIdStr}`,                                            type: 'stream' as const },
-      { name: 'Mapple (4KHD)',   url: `https://www.2embed.cc/embed/${tmdbIdStr}#mapple`,                                   type: 'stream' as const },
-      { name: 'Main',        url: `https://multiembed.mov/directstream.php?video_id=${tmdbIdStr}&tmdb=1`,                   type: 'stream' as const },
-      { name: 'Prime',       url: `https://primestream.io/embed/movie/${tmdbIdStr}`,                                        type: 'stream' as const },
-      { name: 'Torrent Web (Multi-Audio)', url: `webtor:${encodeURIComponent(item.title || item.name)}|${(item.release_date || item.first_air_date || '').substring(0, 4)}`, type: 'stream' as const }
-    ];
-    const sources = rawSources.map(s => ({ ...s, url: s.name.includes('Torrent') ? s.url : this.encodeUrl(s.url) }));
 
     const rawDate = item.release_date || item.first_air_date || '';
     let isUpcoming = false;
@@ -279,9 +246,6 @@ export class MoviesService implements OnModuleInit {
       posterUrl: this.image(item.poster_path),
       logoUrl: logoUrl,
       trailerUrl: '',
-      videoUrl: embedUrl,
-      embedUrl: embedUrl,
-      sources: sources,
       matchScore: Math.max(50, Math.round((item.vote_average || 0) * 10)),
       imdbRating: item.vote_average ? Number.parseFloat(Number(item.vote_average).toFixed(1)) : 0,
       releaseYear: Number.parseInt(rawDate.slice(0, 4), 10) || new Date().getFullYear(),
@@ -294,6 +258,7 @@ export class MoviesService implements OnModuleInit {
       genres: (item.genre_ids || []).map((id: number) => this.genres.get(id)).filter((name: string | undefined): name is string => Boolean(name)),
       cast: [],
       director: '',
+      videoUrl: '',
       tags: [],
       // Catalog responses include the original language, so filters can work before
       // a viewer opens the title and triggers the more detailed TMDB request.
@@ -726,59 +691,9 @@ export class MoviesService implements OnModuleInit {
         }
 
         const bestVideo = this.selectTrailerVideo(details.videos?.results || [], details.original_language, platform);
-        
-        // If TMDB doesn't have a trailer, OR if the trailer isn't in the original language (for non-English movies)
-        const isMissingOrWrongLang = !bestVideo || (details.original_language !== 'en' && bestVideo.iso_639_1 !== details.original_language);
 
-        // Platform-aware language mapping: what language should we search for?
-        // For non-English originals (e.g. Malayalam), prefer the original language trailer.
-        // However if the platform (nprime/nflix) primarily serves Hindi and the movie is in its
-        // original language, the TMDB already has a tagged video — pick it. Only use yt-search as
-        // last resort and use the original title + original language name to be precise.
-        const origLangName = LANGUAGE_NAMES[details.original_language] || details.original_language;
-        const originalTitle = movie.originalTitle || movie.title;
-
-        if (isMissingOrWrongLang) {
-          try {
-            const ytSearch = require('yt-search');
-            // Prefer the original title over the localised one for precise YT matching
-            // e.g. for Drishyam 3 (original Malayalam) search "Drishyam 3 official trailer Malayalam"
-            // using the original title prevents picking up the wrong regional dub
-            const searchTitle = originalTitle !== movie.title ? originalTitle : movie.title;
-            const query = `${searchTitle} official trailer ${origLangName}`;
-            this.logger.log(`TMDB lacks original language trailer. Fallback YT Search: ${query}`);
-            const ytResult = await ytSearch(query);
-            if (ytResult?.videos?.length > 0) {
-              // Validate: the top result should plausibly match (title should contain part of the movie name)
-              const topVideo = ytResult.videos[0];
-              const titleLower = (topVideo.title || '').toLowerCase();
-              const movieNameLower = (searchTitle || '').toLowerCase().split(' ')[0];
-              const isPlausible = titleLower.includes(movieNameLower) || titleLower.includes('trailer') || titleLower.includes('teaser');
-              if (isPlausible) {
-                movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${topVideo.videoId}?autoplay=1`);
-              } else if (ytResult.videos.length > 1) {
-                // Try the second result as a fallback if first is not plausible
-                movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${ytResult.videos[1].videoId}?autoplay=1`);
-              } else if (bestVideo) {
-                movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${bestVideo.key}?autoplay=1`);
-              }
-            } else if (bestVideo) {
-              movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${bestVideo.key}?autoplay=1`);
-            }
-          } catch (e) {
-            this.logger.warn(`yt-search failed for ${movie.title}: ` + e.message);
-            if (bestVideo) movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${bestVideo.key}?autoplay=1`);
-          }
-        } else if (bestVideo) {
+        if (bestVideo) {
           movie.trailerUrl = this.encodeUrl(`https://www.youtube.com/embed/${bestVideo.key}?autoplay=1`);
-        }
-        if (!movie.embedUrl) {
-          movie.embedUrl = this.encodeUrl(movie.isSeries
-            ? `https://www.2embed.cc/embed/${movie.tmdbId}/1/1`
-            : `https://www.2embed.cc/embed/${movie.tmdbId}`);
-        }
-        if (!movie.videoUrl) {
-          movie.videoUrl = movie.embedUrl;
         }
 
         // Extract spoken languages / audio dub availability (with Regional Indian & International ISO mapping)
@@ -875,45 +790,35 @@ export class MoviesService implements OnModuleInit {
       } catch (e) { this.logger.error('Failed to fetch featured movie logo', e); }
     }
     try {
+      const cacheKey = `${id}_${seasonNumber}_${platform}`;
+      if (this.seasonEpisodesCache.has(cacheKey)) {
+        return this.seasonEpisodesCache.get(cacheKey)!;
+      }
+
       const seasonData = await this.tmdb(`tv/${movie.tmdbId}/season/${seasonNumber}`);
       
       const rawEpisodes = seasonData.episodes || [];
 
       const episodes: Episode[] = rawEpisodes.map((ep: any) => {
-        const vl = 'primaryColor=E50914&secondaryColor=141414&iconColor=FFFFFF&nextButton=true&title=false&poster=false&autoplay=true';
         const s = seasonNumber;
         const e = ep.episode_number;
-        
-        const vidLinkUrl = `https://vidlink.pro/tv/${movie.tmdbId}/${s}/${e}?${vl}`;
         
         return {
           id: `ep-${movie.tmdbId}-${s}-${e}`,
           title: ep.name || `Episode ${e}`,
           description: ep.overview || '',
-          duration: ep.runtime ? `${ep.runtime}m` : '24m',
+          duration: ep.runtime ? `${ep.runtime}m` : '',
           episodeNumber: e,
           seasonNumber: s,
           thumbnailUrl: this.image(ep.still_path) || movie.backdropUrl,
-          videoUrl: this.encodeUrl(`https://vidsrc.pm/embed/tv/${movie.tmdbId}/${s}/${e}`),
-          embedUrl: this.encodeUrl(`https://vidsrc.pm/embed/tv/${movie.tmdbId}/${s}/${e}`),
-          sources: [
-            { name: 'VidLink',     url: vidLinkUrl,                                                                                                              type: 'stream' as const },
-            { name: 'AutoEmbed',   url: `https://autoembed.co/tv/tmdb/${movie.tmdbId}/${s}/${e}`,                                     type: 'stream' as const },
-            { name: 'VidSrc.pro',  url: `https://vidsrc.pro/embed/tv/${movie.tmdbId}/${s}/${e}`,                                      type: 'stream' as const },
-            { name: 'VidSrc.cc',   url: `https://vidsrc.cc/v2/embed/tv/${movie.tmdbId}/${s}/${e}`,                                    type: 'stream' as const },
-            { name: 'Embed.su',    url: `https://embed.su/embed/tv/${movie.tmdbId}/${s}/${e}`,                                        type: 'stream' as const },
-            { name: '2Embed (Cineby)', url: `https://www.2embed.cc/embed/${movie.tmdbId}/${s}/${e}`,                                  type: 'stream' as const },
-            { name: 'VidSrc',      url: `https://vidsrc.pm/embed/tv/${movie.tmdbId}/${s}/${e}`,                                       type: 'stream' as const },
-            { name: 'Mapple (4KHD)',   url: `https://www.2embed.cc/embed/${movie.tmdbId}/${s}/${e}#mapple`,                           type: 'stream' as const },
-            { name: 'Main',        url: `https://multiembed.mov/directstream.php?video_id=${movie.tmdbId}&tmdb=1&s=${s}&e=${e}`,      type: 'stream' as const },
-            { name: 'Prime',       url: `https://primestream.io/embed/tv/${movie.tmdbId}/${s}/${e}`,                                  type: 'stream' as const }
-        ].map(src => ({ ...src, url: this.encodeUrl(src.url) }))
-        };  
+          airDate: ep.air_date || '',
+        };
       });
+      this.seasonEpisodesCache.set(cacheKey, episodes);
       return episodes;
     } catch (err) {
       this.logger.warn(`Failed to load season ${seasonNumber} for ${id}: ${err}`);
-      return movie.episodes || [];
+      return [];
     }
   }
 
@@ -930,6 +835,10 @@ export class MoviesService implements OnModuleInit {
     if (!normalized) {
       const allMovies = await this.getAllMovies(platform);
       const res = { movies: this.filterGenre(allMovies, genre) };
+      if (this.state[platform].searchCache.size > 100) {
+        const firstKey = this.state[platform].searchCache.keys().next().value;
+        if (firstKey) this.state[platform].searchCache.delete(firstKey);
+      }
       this.state[platform].searchCache.set(cacheKey, res);
       return res;
     }
@@ -939,7 +848,7 @@ export class MoviesService implements OnModuleInit {
       const allPlatforms: Array<'nflix' | 'nprime' | 'hotstar'> = ['nflix', 'nprime', 'hotstar'];
       const platformLabel: Record<string, string> = { nflix: 'Netflix', nprime: 'Prime Video', hotstar: 'Hotstar' };
       
-      for (const p of allPlatforms) {
+      await Promise.all(allPlatforms.map(async (p) => {
           const pMovies = await this.getAllMovies(p); 
           for (const movie of pMovies) {
               const key = movie.tmdbId || movie.title; 
@@ -952,7 +861,7 @@ export class MoviesService implements OnModuleInit {
                   }
               }
           }
-      }
+      }));
       
       let resultsWithScores = Array.from(combinedMoviesMap.values()).map(m => {
           let score = 0;
@@ -1021,8 +930,11 @@ export class MoviesService implements OnModuleInit {
             const topHits = tmdbSearch.results.slice(0, 5).filter((m: any) => m.media_type === 'movie' || m.media_type === 'tv');
             
             const liveResults: Movie[] = [];
-            for (const hit of topHits) {
-              const providers = await this.tmdb(`${hit.media_type}/${hit.id}/watch/providers`).catch(() => null);
+            await Promise.all(topHits.map(async (hit: any) => {
+              const providers = await this.tmdb(`${hit.media_type}/${hit.id}/watch/providers`).catch((e) => {
+                 this.logger.error(`Failed to fetch providers for ${hit.id}`, e);
+                 return null;
+              });
               
               // Check US and IN regions for providers to maximize chances of finding regional content
               const usProviders = providers?.results?.['US']?.flatrate || [];
@@ -1044,7 +956,7 @@ export class MoviesService implements OnModuleInit {
               this.state[platform].tmdbIdIndex.set(movieObj.tmdbId!, movieObj.id);
               
               liveResults.push(movieObj);
-            }
+            }));
             
             // Prioritize live TMDB results over weak local matches and prevent duplicates, preserving TMDB's relevance order
             const uniqueLiveResults = liveResults.filter(lr => !results.some(r => r.tmdbId === lr.tmdbId));
@@ -1150,7 +1062,8 @@ export class MoviesService implements OnModuleInit {
     let source: Movie;
     try {
       source = await this.getMovieById(id, platform);
-    } catch {
+    } catch (e) {
+      this.logger.error(`Failed to get movie by ID ${id} in getRecommendations`, e);
       return [];
     }
 
@@ -1232,7 +1145,8 @@ export class MoviesService implements OnModuleInit {
         startSeconds: 0,
         endSeconds: introLength,
       };
-    } catch {
+    } catch (e) {
+      this.logger.error(`Failed to get intro timings for ${id}`, e);
       return { hasIntro: false, startSeconds: 0, endSeconds: 0 };
     }
   }
