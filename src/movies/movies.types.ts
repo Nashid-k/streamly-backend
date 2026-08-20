@@ -54,6 +54,7 @@ export interface Movie {
   isPopular?: boolean;
   isTop10?: boolean;
   top10Rank?: number;
+  popularity?: number;
   tags: string[];
   audioLanguages: string[];
   subtitleLanguages: string[];

@@ -248,6 +248,7 @@ export class MoviesService implements OnModuleInit {
       trailerUrl: '',
       matchScore: Math.max(50, Math.round((item.vote_average || 0) * 10)),
       imdbRating: item.vote_average ? Number.parseFloat(Number(item.vote_average).toFixed(1)) : 0,
+      popularity: item.popularity || 0,
       releaseYear: Number.parseInt(rawDate.slice(0, 4), 10) || new Date().getFullYear(),
       releaseDate: rawDate,
       isUpcoming: isUpcoming,
