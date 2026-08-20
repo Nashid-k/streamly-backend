@@ -286,12 +286,16 @@ export class MoviesService implements OnModuleInit {
     const monetization = 'flatrate';
     const region = this.region;
     
-    // Enforce strict platform isolation for both Movies and TV series using with_watch_providers
-    const baseDiscoverMovie = `with_watch_providers=${providerId}&watch_region=${region}&with_watch_monetization_types=${monetization}`;
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Enforce strict platform isolation for both Movies and TV series using with_watch_providers.
+    // To prevent "cam rips" (theatrical prints), we enforce that movies must have a Digital release (type 4) 
+    // that has already happened (release_date.lte=today).
+    const baseDiscoverMovie = `with_watch_providers=${providerId}&watch_region=${region}&with_watch_monetization_types=${monetization}&with_release_type=4&release_date.lte=${today}`;
+    const baseUpcomingMovie = `with_watch_providers=${providerId}&watch_region=${region}&with_watch_monetization_types=${monetization}`;
     const baseDiscoverTv = `with_watch_providers=${providerId}&watch_region=${region}&with_watch_monetization_types=${monetization}`;
     
     // Date ranges for "Recently Added" and "Upcoming"
-    const today = new Date().toISOString().split('T')[0];
     const d = new Date();
     d.setMonth(d.getMonth() - 2);
     const recentDateIso = d.toISOString().split('T')[0];
@@ -345,7 +349,7 @@ export class MoviesService implements OnModuleInit {
       { id: 'trending-movies', name: 'Trending Movies', mediaType: 'movie', path: `discover/movie?${baseDiscoverMovie}&sort_by=popularity.desc` },
       { id: 'recently-added-movies', name: 'Recently Added Movies', mediaType: 'movie', path: `discover/movie?${baseDiscoverMovie}&sort_by=primary_release_date.desc&primary_release_date.lte=${today}` },
       { id: 'leaving-soon-movies', name: 'Leaving Soon', mediaType: 'movie', path: `discover/movie?${baseDiscoverMovie}&sort_by=popularity.asc` },
-      { id: 'upcoming-movies', name: 'Upcoming Movies', mediaType: 'movie', path: `discover/movie?${baseDiscoverMovie}&primary_release_date.gte=${today}` },
+      { id: 'upcoming-movies', name: 'Upcoming Movies', mediaType: 'movie', path: `discover/movie?${baseUpcomingMovie}&primary_release_date.gte=${today}` },
       { id: 'popular-movies', name: 'Popular Movies', mediaType: 'movie', path: `discover/movie?${baseDiscoverMovie}&sort_by=popularity.desc` },
       { id: 'top-rated-movies', name: 'Top Rated Movies', mediaType: 'movie', path: `discover/movie?${baseDiscoverMovie}&sort_by=vote_average.desc&vote_count.gte=1000` },
 
