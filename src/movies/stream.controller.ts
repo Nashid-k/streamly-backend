@@ -14,24 +14,19 @@ export class StreamController {
 
     if (!magnet && title && year) {
       try {
-        const query = encodeURIComponent(`${title} ${year} 1080p multi`);
+        const query = encodeURIComponent(`${title} ${year}`);
         const response = await fetch(`https://apibay.org/q.php?q=${query}`);
-        const data = await response.json();
+        let data = await response.json();
         
         if (data && data.length > 0 && data[0].info_hash && data[0].info_hash !== '0000000000000000000000000000000000000000') {
+          // Sort by seeders to get the most reliable stream
+          data = data.filter((d: any) => d.info_hash !== '0000000000000000000000000000000000000000');
+          data.sort((a: any, b: any) => parseInt(b.seeders) - parseInt(a.seeders));
+          
           const hash = data[0].info_hash;
           magnet = `magnet:?xt=urn:btih:${hash}&tr=udp://tracker.opentrackr.org:1337/announce`;
         } else {
-          // Fallback to non-multi search
-          const fbQuery = encodeURIComponent(`${title} ${year} 1080p`);
-          const fbResponse = await fetch(`https://apibay.org/q.php?q=${fbQuery}`);
-          const fbData = await fbResponse.json();
-          if (fbData && fbData.length > 0 && fbData[0].info_hash && fbData[0].info_hash !== '0000000000000000000000000000000000000000') {
-            const hash = fbData[0].info_hash;
-            magnet = `magnet:?xt=urn:btih:${hash}&tr=udp://tracker.opentrackr.org:1337/announce`;
-          } else {
-            throw new HttpException('No torrent found for this movie', HttpStatus.NOT_FOUND);
-          }
+          throw new HttpException('No torrent found for this movie', HttpStatus.NOT_FOUND);
         }
       } catch (e) {
         throw new HttpException('Failed to search for torrent', HttpStatus.INTERNAL_SERVER_ERROR);
