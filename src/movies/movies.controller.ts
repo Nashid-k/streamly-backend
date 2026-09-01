@@ -221,7 +221,7 @@ export class MoviesController {
       | "sonyliv"
       | "jio" = "netflix",
   ) {
-    setCache(res, 86400); // 24-hour cache for static episodes
+    setCache(res, 3600, 300); // 1-hour cache with 5-min stale-while-revalidate for episodes
     // Clamp season number to a sane range to prevent abuse
     const season = Math.min(
       Math.max(Number.parseInt(seasonNumber, 10) || 1, 1),

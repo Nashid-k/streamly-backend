@@ -89,7 +89,8 @@ export class MoviesService implements OnModuleInit {
   );
   private readonly genres = new Map<number, string>();
   private lastCatalogError: string | undefined;
-  private readonly seasonEpisodesCache = new Map<string, Episode[]>();
+  private readonly seasonEpisodesCache = new Map<string, { episodes: Episode[]; expiresAt: number }>();
+  private readonly SEASON_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
   private readonly state: Record<PlatformKey, PlatformState> =
     Object.fromEntries(
@@ -553,403 +554,132 @@ export class MoviesService implements OnModuleInit {
       "netflix" | "prime" | "hotstar" | "appletv" | "zee5" | "sonyliv" | "jio",
   ): CatalogRail[] {
     const providerId = this.providerMap[platform];
-    const monetization = "flatrate";
+    // ── REDESIGNED: platform-authentic, sectioned, randomized rails ──
     const region = this.region;
-
     const today = new Date().toISOString().split("T")[0];
 
     // Enforce strict platform isolation for both Movies and TV series using with_watch_providers.
     // To prevent "cam rips" (theatrical prints), we enforce that movies must have a Digital release (type 4)
     // that has already happened (release_date.lte=today).
-    const baseDiscoverMovie = `with_watch_providers=${providerId}&watch_region=${region}`;
-    const baseUpcomingMovie = `with_watch_providers=${providerId}&watch_region=${region}`;
-    const baseDiscoverTv = `with_watch_providers=${providerId}&watch_region=${region}`;
+    const base = `with_watch_providers=${providerId}&watch_region=${region}`;
 
     // Date ranges for "Recently Added" and "Upcoming"
-    const d = new Date();
-    d.setMonth(d.getMonth() - 2);
-    const recentDateIso = d.toISOString().split("T")[0];
-    const regionalLanguages = [
-      ["hi", "Hindi"],
-      ["ta", "Tamil"],
-      ["te", "Telugu"],
-      ["ml", "Malayalam"],
-      ["kn", "Kannada"],
-      ["mr", "Marathi"],
-      ["bn", "Bengali"],
-      ["ar", "Arabic"],
-    ] as const;
+    const d2m = new Date(); d2m.setMonth(d2m.getMonth() - 2);
+    const d6m = new Date(); d6m.setMonth(d6m.getMonth() - 6);
+    const recent2m = d2m.toISOString().split("T")[0];
+    const recent6m = d6m.toISOString().split("T")[0];
 
-    const regionalRails = regionalLanguages.flatMap(([code, name]) => [
-      {
-        id: `${code}-movies`,
-        name: `Popular ${name} Movies`,
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&with_original_language=${code}&sort_by=popularity.desc`,
-        pages: 1,
-      },
-      {
-        id: `${code}-series`,
-        name: `Popular ${name} Series`,
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_original_language=${code}&sort_by=popularity.desc`,
-        pages: 1,
-      },
-    ]);
+    const rnd = (a: string[]) => a[Math.floor(Math.random() * a.length)];
+    const pick = <T>(arr: T[], n: number) =>
+      [...arr].sort(() => Math.random() - 0.5).slice(0, n);
 
-    const getRandomName = (names: string[]) =>
-      names[Math.floor(Math.random() * names.length)];
-
-    const curatedRails = [
-      {
-        id: "scifi-hits",
-        name: getRandomName([
-          "Sci-Fi Mindbenders",
-          "Imaginative Sci-Fi",
-          "Out of This World",
-        ]),
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&with_genres=878&sort_by=vote_average.desc&vote_count.gte=500`,
-      },
-      {
-        id: "horror-nights",
-        name: getRandomName([
-          "Horror & Thrills",
-          "Chilling Horror Movies",
-          "Ominous Thrillers",
-          "Scary Movies",
-        ]),
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&with_genres=27,53&sort_by=popularity.desc`,
-      },
-      {
-        id: "family-time",
-        name: getRandomName([
-          "Family Favorites",
-          "Movies for the Whole Family",
-          "Kids & Family",
-        ]),
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&with_genres=10751&sort_by=popularity.desc`,
-      },
-      {
-        id: "documentary",
-        name: getRandomName([
-          "Documentary Features",
-          "Critically Acclaimed Documentaries",
-          "Real Life Stories",
-        ]),
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&with_genres=99&sort_by=popularity.desc`,
-      },
-      {
-        id: "comedy-gold",
-        name: getRandomName([
-          "Comedy Gold",
-          "Feel-Good Comedies",
-          "Laugh-Out-Loud Movies",
-        ]),
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&with_genres=35&sort_by=popularity.desc`,
-      },
-      {
-        id: "action-packed",
-        name: getRandomName([
-          "High Octane Action",
-          "Action & Adventure",
-          "Explosive Action Movies",
-        ]),
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&with_genres=28&sort_by=popularity.desc`,
-      },
-      {
-        id: "romance-picks",
-        name: getRandomName(["Romantic Dramas", "Heartfelt Movies", "Romance"]),
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&with_genres=10749&sort_by=popularity.desc`,
-      },
-      {
-        id: "thriller-tv",
-        name: getRandomName([
-          "Gripping TV Thrillers",
-          "Suspenseful TV Shows",
-          "Crime Thrillers",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=80,53&sort_by=popularity.desc`,
-      },
-      {
-        id: "crime-series",
-        name: getRandomName([
-          "Crime & Investigation",
-          "True Crime Inspired",
-          "Gritty Crime TV Shows",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=80&sort_by=popularity.desc`,
-      },
-      {
-        id: "mystery-box",
-        name: getRandomName([
-          "Mystery & Suspense",
-          "Whodunit TV Shows",
-          "Mind-Bending Mysteries",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=9648&sort_by=popularity.desc`,
-      },
-      {
-        id: "award-winners",
-        name: getRandomName([
-          "Award-Winning Cinema",
-          "Critically Acclaimed Movies",
-          "Oscar Winners",
-        ]),
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&vote_average.gte=8&vote_count.gte=1000`,
-      },
-      {
-        id: "classic-rewind",
-        name: getRandomName([
-          "Classic Rewind",
-          "Nostalgic Movies",
-          "Throwback Movies",
-        ]),
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&release_date.lte=1990-12-31&sort_by=popularity.desc`,
-      },
-      {
-        id: "indie-gems",
-        name: getRandomName([
-          "Indie & Art House",
-          "Independent Movies",
-          "Critically Acclaimed Indie",
-        ]),
-        mediaType: "movie" as const,
-        path: `discover/movie?${baseDiscoverMovie}&with_genres=18&vote_average.gte=7&vote_count.gte=200`,
-      },
-      {
-        id: "k-drama",
-        name: getRandomName([
-          "K-Drama Hits",
-          "Korean TV Shows",
-          "Binge-Worthy K-Dramas",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_original_language=ko&sort_by=popularity.desc`,
-      },
-      {
-        id: "british-tv",
-        name: getRandomName([
-          "British TV Dramas",
-          "Acclaimed British Shows",
-          "Made in the UK",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_original_language=en&origin_country=GB&sort_by=popularity.desc`,
-      },
-      {
-        id: "fantasy-realms",
-        name: getRandomName([
-          "Fantasy Worlds",
-          "Epic Fantasy Series",
-          "Magical TV",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=10765&sort_by=popularity.desc`,
-      },
-      {
-        id: "animation-tv",
-        name: getRandomName([
-          "Animated Series",
-          "Adult Animation",
-          "Toons for Everyone",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=16&sort_by=popularity.desc`,
-      },
-      {
-        id: "reality-tv",
-        name: getRandomName([
-          "Reality TV",
-          "Unscripted TV",
-          "Binge-Worthy Reality",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=10764&sort_by=popularity.desc`,
-      },
+    // ══════════════════════════════════════════════════════════════════
+    // SECTION 1 — Hero / Editorial
+    // ══════════════════════════════════════════════════════════════════
+    const editorial: CatalogRail[] = [
+      { id: "trending-movies", name: rnd(["Trending Movies", "Popular Right Now", "What's Hot"]), mediaType: "movie", path: `discover/movie?${base}&sort_by=popularity.desc` },
+      { id: "trending-series", name: rnd(["Trending TV Shows", "Binge-Worthy Series", "Top Series Right Now"]), mediaType: "tv", path: `discover/tv?${base}&sort_by=popularity.desc` },
+      { id: "new-movies", name: rnd(["New on Movies", "Recently Added Movies", "Fresh Movies"]), mediaType: "movie", path: `discover/movie?${base}&sort_by=primary_release_date.desc&primary_release_date.lte=${today}&vote_count.gte=50` },
+      { id: "new-series", name: rnd(["New on TV", "Recently Added Shows", "Fresh Series"]), mediaType: "tv", path: `discover/tv?${base}&sort_by=first_air_date.desc&first_air_date.lte=${today}&vote_count.gte=20` },
     ];
-
-    // Shuffle the curated rails so the homepage looks dynamic
-    const shuffledCurated = curatedRails
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 10);
-    // Increased regional rails from 3 to 8 to ensure Tamil, Malayalam, Hindi, etc., always show up
-    const shuffledRegional = regionalRails
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 8);
-
-    const indianCinemaRail = {
-      id: "indian-cinema-hits",
-      name: "South Indian & Bollywood Hits",
-      mediaType: "movie" as const,
-      path: `discover/movie?${baseDiscoverMovie}&with_original_language=hi|ta|te|ml|kn&sort_by=popularity.desc&vote_count.gte=100`,
-    };
-
+    // ══════════════════════════════════════════════════════════════════
+    // SECTION 2 — Mood / Genre rails (Netflix/Prime-style)
+    // ══════════════════════════════════════════════════════════════════
+    const moodMovies: CatalogRail[] = [
+      { id: "mood-action", name: rnd(["High Octane Action", "Action Essentials"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=28&sort_by=popularity.desc` },
+      { id: "mood-horror", name: rnd(["Late Night Horror", "Horror & Thrills"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=27,53&sort_by=popularity.desc` },
+      { id: "mood-romance", name: rnd(["Date Night Picks", "Romantic Dramas"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=10749&sort_by=popularity.desc` },
+      { id: "mood-comedy", name: rnd(["Comedy Gold", "Feel-Good Movies"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=35&sort_by=popularity.desc` },
+      { id: "mood-scifi", name: rnd(["Sci-Fi Mindbenders", "Beyond Imagination"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=878&sort_by=vote_average.desc&vote_count.gte=500` },
+      { id: "mood-suspense", name: rnd(["Edge-of-Seat Thrillers", "Unputdownable"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=53,9648&sort_by=popularity.desc` },
+      { id: "mood-docs", name: rnd(["Real Stories", "True Crime & Docs"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=99&sort_by=popularity.desc` },
+      { id: "mood-family", name: rnd(["Family Movie Night", "All Ages Welcome"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=10751&sort_by=popularity.desc` },
+      { id: "mood-fantasy", name: rnd(["Epic Fantasy Adventures", "Mythical Worlds"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=14,12&sort_by=popularity.desc` },
+      { id: "mood-war", name: rnd(["War & Survival", "Stories of Courage"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=10752&sort_by=vote_average.desc&vote_count.gte=200` },
+    ];
+    const moodTv: CatalogRail[] = [
+      { id: "tv-prestige", name: rnd(["Prestige TV", "Award-Winning Shows"]), mediaType: "tv", path: `discover/tv?${base}&sort_by=vote_average.desc&vote_count.gte=1000` },
+      { id: "tv-crime", name: rnd(["Crime & Investigation", "True Crime Obsessed"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=80&sort_by=popularity.desc` },
+      { id: "tv-drama", name: rnd(["Binge-Worthy Dramas", "Character-Driven Stories"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=18&sort_by=popularity.desc` },
+      { id: "tv-comedy", name: rnd(["Comedy Series", "Sitcoms & More"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=35&sort_by=popularity.desc` },
+      { id: "tv-scifi", name: rnd(["Sci-Fi TV", "Alternate Realities"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=10765&sort_by=popularity.desc` },
+      { id: "tv-reality", name: rnd(["Reality TV", "Unscripted & Real"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=10764&sort_by=popularity.desc` },
+      { id: "tv-docs", name: rnd(["Docuseries", "Real Life, Real Stories"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=99&sort_by=popularity.desc` },
+    ];
+    // ══════════════════════════════════════════════════════════════════
+    // SECTION 3 — World Cinema
+    // ══════════════════════════════════════════════════════════════════
+    const worldRails: CatalogRail[] = [
+      { id: "world-kdrama", name: rnd(["K-Drama Hits", "K-Wave"]), mediaType: "tv", path: `discover/tv?${base}&with_original_language=ko&sort_by=popularity.desc` },
+      { id: "world-jdrama", name: rnd(["Japanese TV Shows", "J-Drama"]), mediaType: "tv", path: `discover/tv?${base}&with_original_language=ja&sort_by=popularity.desc` },
+      { id: "world-british", name: rnd(["British TV", "Made in Britain"]), mediaType: "tv", path: `discover/tv?${base}&with_original_language=en&origin_country=GB&sort_by=popularity.desc` },
+      { id: "world-spanish", name: rnd(["Spanish-Language Hits", "Latin & Spanish TV"]), mediaType: "tv", path: `discover/tv?${base}&with_original_language=es&sort_by=popularity.desc` },
+      { id: "world-french", name: rnd(["French Cinema", "Films Français"]), mediaType: "movie", path: `discover/movie?${base}&with_original_language=fr&sort_by=vote_average.desc&vote_count.gte=200` },
+    ];
+    // ══════════════════════════════════════════════════════════════════
+    // SECTION 4 — Anime (granular)
+    // ══════════════════════════════════════════════════════════════════
+    const animeRails: CatalogRail[] = [
+      { id: "anime-trending", name: rnd(["Trending Anime", "Anime in Season"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=16&with_original_language=ja&sort_by=popularity.desc&first_air_date.gte=${recent6m}&first_air_date.lte=${today}` },
+      { id: "anime-popular", name: rnd(["Popular Anime", "All-Time Anime Hits"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=16&with_original_language=ja&sort_by=popularity.desc` },
+      { id: "anime-top", name: rnd(["Top Rated Anime", "Anime Masterpieces"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=16&with_original_language=ja&sort_by=vote_average.desc&vote_count.gte=500` },
+      { id: "anime-action", name: rnd(["Action Anime", "Shonen & Battle"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=16,10759&with_original_language=ja&sort_by=popularity.desc` },
+      { id: "anime-drama", name: rnd(["Anime Dramas", "Emotional Anime"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=16,18&with_original_language=ja&sort_by=vote_average.desc&vote_count.gte=200` },
+      { id: "anime-movies", name: rnd(["Anime Movies", "Anime Feature Films"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=16&with_original_language=ja&sort_by=popularity.desc` },
+      { id: "anime-mystery", name: rnd(["Mystery Anime", "Psychological Anime"]), mediaType: "tv", path: `discover/tv?${base}&with_genres=16,9648&with_original_language=ja&sort_by=vote_average.desc&vote_count.gte=100` },
+    ];
+    // ══════════════════════════════════════════════════════════════════
+    // SECTION 5 — Indian / Regional (curated, not overwhelming)
+    // ══════════════════════════════════════════════════════════════════
+    type LangTuple = [string, string];
+    const topLangs: LangTuple[] = [["hi", "Hindi"], ["ta", "Tamil"], ["te", "Telugu"], ["ml", "Malayalam"]];
+    const secLangs: LangTuple[] = [["kn", "Kannada"], ["bn", "Bengali"], ["mr", "Marathi"]];
+    const regionalRails: CatalogRail[] = [
+      ...topLangs.flatMap(([c, n]): CatalogRail[] => [
+        { id: `${c}-movies`, name: rnd([`Popular ${n} Movies`, `${n} Blockbusters`]), mediaType: "movie", path: `discover/movie?${base}&with_original_language=${c}&sort_by=popularity.desc&vote_count.gte=20`, pages: 1 },
+        { id: `${c}-series`, name: rnd([`${n} Web Series`, `Trending in ${n}`]), mediaType: "tv", path: `discover/tv?${base}&with_original_language=${c}&sort_by=popularity.desc&vote_count.gte=10`, pages: 1 },
+      ]),
+      ...pick(secLangs, 2).flatMap(([c, n]): CatalogRail[] => [
+        { id: `${c}-movies-sec`, name: `${n} Movies`, mediaType: "movie", path: `discover/movie?${base}&with_original_language=${c}&sort_by=popularity.desc&vote_count.gte=10`, pages: 1 },
+      ]),
+      { id: "indian-blockbusters", name: rnd(["Indian Blockbusters", "Bollywood & South Hits"]), mediaType: "movie", path: `discover/movie?${base}&with_original_language=hi|ta|te|ml|kn&sort_by=popularity.desc&vote_count.gte=100` },
+      { id: "indian-series", name: rnd(["Indian Web Series", "Desi Series"]), mediaType: "tv", path: `discover/tv?${base}&with_original_language=hi|ta|te|ml|kn&sort_by=popularity.desc&vote_count.gte=30` },
+      { id: "dubbed-hits", name: rnd(["Multi-Language Dubbed Hits", "Dubbed for You"]), mediaType: "movie", path: `discover/movie?${base}&with_original_language=en|te|ta|ml&with_spoken_languages=hi|ta|te&sort_by=popularity.desc&vote_count.gte=500` },
+    ];
+    // ══════════════════════════════════════════════════════════════════
+    // SECTION 6 — Quality / Curation
+    // ══════════════════════════════════════════════════════════════════
+    const qualityRails: CatalogRail[] = [
+      { id: "quality-oscar", name: rnd(["Award Winners", "Critically Acclaimed"]), mediaType: "movie", path: `discover/movie?${base}&vote_average.gte=8&vote_count.gte=1000` },
+      { id: "quality-hidden", name: rnd(["Hidden Gems", "Underrated Movies"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=18&vote_average.gte=7&vote_count.gte=200&vote_count.lte=3000` },
+      { id: "quality-indie", name: rnd(["Indie Darlings", "Independent Cinema"]), mediaType: "movie", path: `discover/movie?${base}&with_genres=18&with_keywords=14507&sort_by=vote_average.desc&vote_count.gte=100` },
+    ];
+    // ══════════════════════════════════════════════════════════════════
+    // SECTION 7 — Time-sensitive
+    // ══════════════════════════════════════════════════════════════════
+    const urgencyRails: CatalogRail[] = [
+      { id: "leaving-soon", name: rnd(["Leaving Soon", "Don't Miss Out"]), mediaType: "movie", path: `discover/movie?${base}&sort_by=popularity.asc&vote_count.gte=100` },
+      { id: "upcoming-movies", name: rnd(["Coming Soon", "Upcoming Movies"]), mediaType: "movie", path: `discover/movie?${base}&primary_release_date.gte=${today}` },
+      { id: "upcoming-series", name: rnd(["New Series Coming", "Premiering Soon"]), mediaType: "tv", path: `discover/tv?${base}&first_air_date.gte=${today}` },
+    ];
+    // ══════════════════════════════════════════════════════════════════
+    // ASSEMBLE — Balanced, non-repetitive subset
+    // ══════════════════════════════════════════════════════════════════
+    const pM = pick(moodMovies, 5);
+    const pT = pick(moodTv, 4);
+    const pA = pick(animeRails.slice(0, 5), 4);
+    const pW = pick(worldRails, 2);
+    const pQ = pick(qualityRails, 2);
     return [
-      // 1. Movies Domain
-      {
-        id: "trending-movies",
-        name: "Trending Movies",
-        mediaType: "movie",
-        path: `discover/movie?${baseDiscoverMovie}&sort_by=popularity.desc`,
-      },
-      {
-        id: "recently-added-movies",
-        name: "Recently Added Movies",
-        mediaType: "movie",
-        path: `discover/movie?${baseDiscoverMovie}&sort_by=primary_release_date.desc&primary_release_date.lte=${today}`,
-      },
-      {
-        id: "leaving-soon-movies",
-        name: "Leaving Soon",
-        mediaType: "movie",
-        path: `discover/movie?${baseDiscoverMovie}&sort_by=popularity.asc`,
-      },
-      {
-        id: "upcoming-movies",
-        name: "Upcoming Movies",
-        mediaType: "movie",
-        path: `discover/movie?${baseUpcomingMovie}&primary_release_date.gte=${today}`,
-      },
-      {
-        id: "popular-movies",
-        name: "Popular Movies",
-        mediaType: "movie",
-        path: `discover/movie?${baseDiscoverMovie}&sort_by=popularity.desc`,
-      },
-      {
-        id: "top-rated-movies",
-        name: "Top Rated Movies",
-        mediaType: "movie",
-        path: `discover/movie?${baseDiscoverMovie}&sort_by=vote_average.desc&vote_count.gte=1000`,
-      },
-
-      // 2. TV Series Domain
-      {
-        id: "trending-series",
-        name: "Trending TV Shows",
-        mediaType: "tv",
-        path: `discover/tv?${baseDiscoverTv}&sort_by=popularity.desc`,
-      },
-      {
-        id: "recently-added-series",
-        name: "Recently Added TV Shows",
-        mediaType: "tv",
-        path: `discover/tv?${baseDiscoverTv}&sort_by=first_air_date.desc&first_air_date.lte=${today}`,
-      },
-      {
-        id: "upcoming-series",
-        name: "Upcoming TV Shows",
-        mediaType: "tv",
-        path: `discover/tv?${baseDiscoverTv}&first_air_date.gte=${today}`,
-      },
-      {
-        id: "popular-series",
-        name: "Popular TV Shows",
-        mediaType: "tv",
-        path: `discover/tv?${baseDiscoverTv}&sort_by=popularity.desc`,
-      },
-
-      {
-        id: "action-adventure-tv",
-        name: getRandomName([
-          "Action & Adventure",
-          "Epic TV Action",
-          "Adrenaline Rush",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=10759&sort_by=popularity.desc`,
-      },
-      {
-        id: "comedy-tv",
-        name: getRandomName(["TV Comedies", "Sitcoms", "Laugh-Out-Loud TV"]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=35&sort_by=popularity.desc`,
-      },
-      {
-        id: "drama-tv",
-        name: getRandomName([
-          "TV Dramas",
-          "Critically Acclaimed TV",
-          "Binge-Worthy Dramas",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=18&sort_by=popularity.desc`,
-      },
-      {
-        id: "family-tv",
-        name: getRandomName([
-          "Family TV Shows",
-          "Kids & Family",
-          "Watch Together",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=10751,10762&sort_by=popularity.desc`,
-      },
-      {
-        id: "documentary-tv",
-        name: getRandomName([
-          "Docuseries",
-          "Real Life Stories",
-          "Critically Acclaimed Documentaries",
-        ]),
-        mediaType: "tv" as const,
-        path: `discover/tv?${baseDiscoverTv}&with_genres=99&sort_by=popularity.desc`,
-      },
-
-      // 3. Anime Domain
-      {
-        id: "trending-anime",
-        name: "Trending Anime",
-        mediaType: "tv",
-        path: `discover/tv?${baseDiscoverTv}&with_genres=16&with_original_language=ja&sort_by=popularity.desc&first_air_date.gte=${recentDateIso}&first_air_date.lte=${today}`,
-      },
-      {
-        id: "popular-anime",
-        name: "Popular Anime Series",
-        mediaType: "tv",
-        path: `discover/tv?${baseDiscoverTv}&with_genres=16&with_original_language=ja&sort_by=popularity.desc`,
-      },
-      {
-        id: "top-rated-anime",
-        name: "Top Rated Anime",
-        mediaType: "tv",
-        path: `discover/tv?${baseDiscoverTv}&with_genres=16&with_original_language=ja&sort_by=vote_average.desc&vote_count.gte=500`,
-      },
-      {
-        id: "anime-movies",
-        name: "Anime Movies",
-        mediaType: "movie",
-        path: `discover/movie?${baseDiscoverMovie}&with_genres=16&with_original_language=ja&sort_by=popularity.desc`,
-      },
-
-      // 4. Dynamic Editorial Genres
-      ...shuffledCurated,
-
-      // 5. Massive Indian Cinema Rail (Combined)
-      indianCinemaRail,
-
-      // 6. Multi-Language / Dubbed Hits
-      {
-        id: "multi-language-dubs",
-        name: "Available in Multiple Languages",
-        mediaType: "movie",
-        path: `discover/movie?${baseDiscoverMovie}&with_original_language=en|te|ta|ml&with_spoken_languages=hi|ta|te&sort_by=popularity.desc&vote_count.gte=500`,
-      },
-
-      // 7. Dynamic Regional Specific Rails
-      ...shuffledRegional,
+      ...editorial,
+      ...pM, ...pT,
+      ...pA,
+      ...pQ,
+      ...pW,
+      ...urgencyRails,
+      ...regionalRails,
+      ...pick([...moodMovies, ...moodTv].filter((r) => ![...pM, ...pT].some((p) => p.id === r.id)), 3),
+      ...pick(animeRails.slice(5), 2),
     ];
   }
 
@@ -1844,7 +1574,20 @@ export class MoviesService implements OnModuleInit {
       if (internalId) movie = this.state[platform].movies.get(internalId);
     }
 
-    // If not found in catalog, try getMovieById which does global search
+    // If not found in the requested platform's catalog, search all platforms
+    if (!movie) {
+      for (const p of ALL_PLATFORMS) {
+        if (p === platform) continue;
+        movie = this.state[p].movies.get(id);
+        if (!movie) {
+          const internalId = this.state[p].tmdbIdIndex.get(id);
+          if (internalId) movie = this.state[p].movies.get(internalId);
+        }
+        if (movie) break;
+      }
+    }
+
+    // If still not found, try getMovieById which does live TMDB fetch
     if (!movie) {
       try {
         const fetched = await this.getMovieById(id, platform);
@@ -1852,31 +1595,75 @@ export class MoviesService implements OnModuleInit {
           movie = this.state[platform].movies.get(id) || fetched as any;
         }
       } catch (e) {
-        // Ignore — we'll try to extract tmdbId from the id string below
+        this.logger.warn(`[Episodes] getMovieById fallback failed for ${id}: ${e}`);
       }
     }
 
     try {
       const cacheKey = `${id}_${seasonNumber}_${platform}`;
-      if (this.seasonEpisodesCache.has(cacheKey)) {
-        return this.seasonEpisodesCache.get(cacheKey)!;
+      const cached = this.seasonEpisodesCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.episodes;
       }
+      // Expired entry — remove it and re-fetch
+      if (cached) this.seasonEpisodesCache.delete(cacheKey);
 
-      // Extract TMDB ID: from movie object, or directly from the id string (tmdb-tv-XXX)
+      // Extract TMDB ID from movie object or from the id string
       const tmdbId =
         movie?.tmdbId ??
         (typeof id === "string" && id.startsWith("tmdb-tv-")
           ? id.replace(/^tmdb-tv-/, "")
-          : undefined);
+          : typeof id === "string" && id.startsWith("tmdb-movie-")
+            ? id.replace(/^tmdb-movie-/, "")
+            : undefined);
 
       if (!tmdbId) {
         this.logger.warn(
-          `Cannot load episodes for ${id} in ${platform}: missing TMDB id`,
+          `[Episodes] Cannot load episodes for ${id} in ${platform}: missing TMDB id (movie found: ${Boolean(movie)})`,
         );
         return [];
       }
 
-      const seasonData = await this.tmdb(`tv/${String(tmdbId)}/season/${seasonNumber}`);
+      this.logger.log(`[Episodes] Fetching season ${seasonNumber} for TMDB ${tmdbId} (${id})`);
+
+      // CRITICAL: Use tmdbAdapter directly (bypass Redis cache) so stale
+      // empty-season responses don't block fresh data for 24 hours.
+      let seasonData: any = null;
+      let lastErr: any = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          if (!this.tmdbAdapter) {
+            this.tmdbAdapter = new TmdbAdapter(
+              this.baseUrl,
+              this.fallbackBaseUrls,
+              this.apiKey,
+              this.readToken,
+              this.language,
+              this.region,
+              this.requestTimeoutMs,
+            );
+          }
+          seasonData = await this.tmdbAdapter.get(
+            `tv/${String(tmdbId)}/season/${seasonNumber}`,
+          );
+          break;
+        } catch (err) {
+          lastErr = err;
+          this.logger.warn(
+            `[Episodes] TMDB attempt ${attempt}/2 failed for ${tmdbId} season ${seasonNumber}: ${err}`,
+          );
+          if (attempt < 2) {
+            await new Promise((r) => setTimeout(r, 500 * attempt));
+          }
+        }
+      }
+
+      if (!seasonData) {
+        this.logger.warn(
+          `[Episodes] All TMDB attempts failed for ${id} season ${seasonNumber}: ${lastErr}`,
+        );
+        return [];
+      }
 
       const rawEpisodes = seasonData.episodes || [];
 
@@ -1895,11 +1682,18 @@ export class MoviesService implements OnModuleInit {
           airDate: ep.air_date || "",
         };
       });
-      this.seasonEpisodesCache.set(cacheKey, episodes);
+
+      // Cache results (1h for episodes, 5min for empty to avoid hammering)
+      this.seasonEpisodesCache.set(cacheKey, {
+        episodes,
+        expiresAt: Date.now() + (episodes.length > 0 ? this.SEASON_CACHE_TTL_MS : 5 * 60 * 1000),
+      });
+
+      this.logger.log(`[Episodes] Loaded ${episodes.length} episodes for ${id} season ${seasonNumber}`);
       return episodes;
     } catch (err) {
       this.logger.warn(
-        `Failed to load season ${seasonNumber} for ${id}: ${err}`,
+        `[Episodes] Failed to load season ${seasonNumber} for ${id}: ${err}`,
       );
       return [];
     }
@@ -2125,7 +1919,13 @@ export class MoviesService implements OnModuleInit {
         }
       }
 
-      const resultObj = { movies: results, actor: undefined };
+      // Generate suggestions when results are empty or very weak
+      let suggestions: string[] = [];
+      if (results.length === 0 && normalized.length > 1) {
+        suggestions = this.generateSearchSuggestions(normalized, combinedMoviesMap);
+      }
+
+      const resultObj = { movies: results, actor: undefined, suggestions };
 
       // Cache Search Result (LRU 100 limit per platform)
       if (this.state[platform].searchCache.size > 100) {
@@ -2142,9 +1942,64 @@ export class MoviesService implements OnModuleInit {
   }
 
   private filterGenre(titles: Movie[], genre?: string) {
-    return genre && genre !== "All"
-      ? titles.filter((item) => item.genres.includes(genre))
-      : titles;
+    if (!genre || genre === "All") return titles;
+    return titles.filter((item) => item.genres?.includes(genre));
+  }
+
+  /**
+   * Generate "did you mean" style suggestions when search returns no results.
+   * Uses character-level similarity (Levenshtein-ish) against catalog titles.
+   */
+  private generateSearchSuggestions(
+    query: string,
+    catalog: Map<string, Movie>,
+  ): string[] {
+    const suggestions: { title: string; distance: number }[] = [];
+
+    for (const movie of catalog.values()) {
+      const title = movie.title.toLowerCase();
+      // Quick pre-filter: skip titles that are too different in length
+      if (Math.abs(title.length - query.length) > 5) continue;
+
+      const distance = this.levenshteinDistance(query, title);
+      // Only suggest if distance is within reasonable bounds (typo tolerance)
+      const maxDistance = Math.max(2, Math.floor(query.length * 0.4));
+      if (distance <= maxDistance && distance > 0) {
+        suggestions.push({ title: movie.title, distance });
+      }
+    }
+
+    return suggestions
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 5)
+      .map((s) => s.title);
+  }
+
+  /** Simple Levenshtein distance for short strings */
+  private levenshteinDistance(a: string, b: string): number {
+    const la = a.length;
+    const lb = b.length;
+    if (la === 0) return lb;
+    if (lb === 0) return la;
+
+    const matrix: number[][] = [];
+    for (let i = 0; i <= la; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= lb; j++) {
+      matrix[0][j] = j;
+    }
+    for (let i = 1; i <= la; i++) {
+      for (let j = 1; j <= lb; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost,
+        );
+      }
+    }
+    return matrix[la][lb];
   }
 
   async getSimilarMovies(
