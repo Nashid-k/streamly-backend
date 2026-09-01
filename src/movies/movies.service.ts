@@ -1177,7 +1177,7 @@ export class MoviesService implements OnModuleInit {
         isSeries: false,
       },
       {
-        id: "m-1399",
+        id: "tmdb-tv-1399",
         tmdbId: "1399",
         title: "Game of Thrones",
         description:
@@ -1201,7 +1201,7 @@ export class MoviesService implements OnModuleInit {
         isSeries: true,
       },
       {
-        id: "m-66732",
+        id: "tmdb-tv-66732",
         tmdbId: "66732",
         title: "Stranger Things",
         description:
