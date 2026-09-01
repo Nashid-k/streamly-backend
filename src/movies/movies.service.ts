@@ -1843,27 +1843,30 @@ export class MoviesService implements OnModuleInit {
       const internalId = this.state[platform].tmdbIdIndex.get(id);
       if (internalId) movie = this.state[platform].movies.get(internalId);
     }
-    if (!movie) return [];
 
-    // Ensure TV metadata is loaded
-    if (movie.isSeries === undefined || movie.seasonsCount === undefined) {
+    // If not found in catalog, try getMovieById which does global search
+    if (!movie) {
       try {
-        await this.getMovieById(id, platform);
-        movie = this.state[platform].movies.get(id) || movie;
+        const fetched = await this.getMovieById(id, platform);
+        if (fetched) {
+          movie = this.state[platform].movies.get(id) || fetched as any;
+        }
       } catch (e) {
-        this.logger.error("Failed to fetch featured movie logo", e);
+        // Ignore — we'll try to extract tmdbId from the id string below
       }
     }
+
     try {
       const cacheKey = `${id}_${seasonNumber}_${platform}`;
       if (this.seasonEpisodesCache.has(cacheKey)) {
         return this.seasonEpisodesCache.get(cacheKey)!;
       }
 
+      // Extract TMDB ID: from movie object, or directly from the id string (tmdb-tv-XXX)
       const tmdbId =
-        movie.tmdbId ??
-        (typeof movie.id === "string" && movie.id.startsWith("tmdb-tv-")
-          ? movie.id.replace(/^tmdb-tv-/, "")
+        movie?.tmdbId ??
+        (typeof id === "string" && id.startsWith("tmdb-tv-")
+          ? id.replace(/^tmdb-tv-/, "")
           : undefined);
 
       if (!tmdbId) {
@@ -1882,13 +1885,13 @@ export class MoviesService implements OnModuleInit {
         const e = ep.episode_number;
 
         return {
-          id: `ep-${movie.tmdbId}-${s}-${e}`,
+          id: `ep-${tmdbId}-${s}-${e}`,
           title: ep.name || `Episode ${e}`,
           description: ep.overview || "",
           duration: ep.runtime ? `${ep.runtime}m` : "",
           episodeNumber: e,
           seasonNumber: s,
-          thumbnailUrl: this.image(ep.still_path) || movie.backdropUrl,
+          thumbnailUrl: this.image(ep.still_path) || movie?.backdropUrl || "",
           airDate: ep.air_date || "",
         };
       });
