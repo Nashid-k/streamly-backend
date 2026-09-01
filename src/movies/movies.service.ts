@@ -474,6 +474,7 @@ export class MoviesService implements OnModuleInit {
       id: `tmdb-${mediaType}-${item.id}`,
       tmdbId: tmdbIdStr,
       imdbId: item.imdb_id || item.external_ids?.imdb_id,
+      seasonsCount: item.number_of_seasons || undefined,
 
       title:
         item.title ||
@@ -1300,6 +1301,7 @@ export class MoviesService implements OnModuleInit {
       maturityRating: m.maturityRating,
       duration: m.duration,
       isSeries: m.isSeries,
+      seasonsCount: m.seasonsCount,
       logoUrl: m.logoUrl,
       releaseYear: m.releaseYear,
       top10Rank: m.top10Rank,
@@ -1858,9 +1860,20 @@ export class MoviesService implements OnModuleInit {
         return this.seasonEpisodesCache.get(cacheKey)!;
       }
 
-      const seasonData = await this.tmdb(
-        `tv/${movie.tmdbId}/season/${seasonNumber}`,
-      );
+      const tmdbId =
+        movie.tmdbId ??
+        (typeof movie.id === "string" && movie.id.startsWith("tmdb-tv-")
+          ? movie.id.replace(/^tmdb-tv-/, "")
+          : undefined);
+
+      if (!tmdbId) {
+        this.logger.warn(
+          `Cannot load episodes for ${id} in ${platform}: missing TMDB id`,
+        );
+        return [];
+      }
+
+      const seasonData = await this.tmdb(`tv/${String(tmdbId)}/season/${seasonNumber}`);
 
       const rawEpisodes = seasonData.episodes || [];
 
