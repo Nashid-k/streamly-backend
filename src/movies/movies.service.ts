@@ -526,6 +526,7 @@ private encodeUrl(url: string): string {
           : [],
       subtitleLanguages: [],
       nextEpisode: nextEpisode,
+      isStreaming: false,
       isInTheaters: false,
       expectedOttDate: undefined as string | undefined,
     };
@@ -1558,7 +1559,7 @@ private encodeUrl(url: string): string {
       }
     }
 
-    const availablePlatforms: string[] = [];
+    let availablePlatforms: string[] = [];
     const tmdbId = movie.tmdbId;
 
     if (tmdbId) {
@@ -1570,95 +1571,124 @@ private encodeUrl(url: string): string {
       }
     }
 
-    // Fallback: if no platforms found from catalog, check TMDB watch providers
-    if (availablePlatforms.length === 0 && tmdbId) {
+    // ──────────────────────────────────────────────────────────────────────
+    // CONTENT AVAILABILITY STATE MACHINE
+    // Uses TMDB watch/providers as source of truth for streaming status.
+    //
+    // States (mutually exclusive, highest priority wins):
+    //   STREAMING     → has flatrate providers → show play button + platform
+    //   IN_THEATERS   → no flatrate, only rent/buy or no providers + past release → show 'In Theaters'
+    //   UPCOMING      → no providers + future release date → show 'Coming Soon'
+    // ──────────────────────────────────────────────────────────────────────
+    let isStreaming = false;
+    let isInTheaters = false;
+    let isUpcoming = movie.isUpcoming || false;
+    let expectedOttDate: string | undefined = undefined;
+
+    if (tmdbId) {
       try {
         const mediaType = movie.isSeries ? 'tv' : 'movie';
         const providers = await this.tmdb(`${mediaType}/${tmdbId}/watch/providers`);
-        const regionResults = providers?.results?.[this.region] || providers?.results?.['US'] || {};
-        const flatrate = regionResults.flatrate || [];
+        const regionResults =
+          providers?.results?.[this.region] ||
+          providers?.results?.['IN'] ||
+          providers?.results?.['US'] ||
+          {};
+
+        const flatrate: any[] = regionResults.flatrate || []; // actual streaming
+        const rent: any[] = regionResults.rent || [];         // digital rental/purchase
+        const buy: any[] = regionResults.buy || [];           // digital purchase
+        const link: string = regionResults.link || '';
+
+        // ── Step 1: Build availablePlatforms from TMDB flatrate (source of truth) ──
+        const tmdbPlatformNames: string[] = [];
         for (const fp of flatrate) {
           const name = (fp.provider_name || '').toLowerCase();
-          if (name.includes('netflix')) availablePlatforms.push('Netflix');
-          else if (name.includes('amazon') || name.includes('prime')) availablePlatforms.push('Prime Video');
-          else if (name.includes('hotstar') || name.includes('disney')) availablePlatforms.push('Hotstar');
-          else if (name.includes('apple')) availablePlatforms.push('Apple TV+');
-          else if (name.includes('zee5')) availablePlatforms.push('Zee5');
-          else if (name.includes('sony') || name.includes('sonyliv')) availablePlatforms.push('Sony LIV');
-          else if (name.includes('jio')) availablePlatforms.push('JioCinema');
+          if (name.includes('netflix')) tmdbPlatformNames.push('Netflix');
+          else if (name.includes('amazon') || name.includes('prime')) tmdbPlatformNames.push('Prime Video');
+          else if (name.includes('hotstar') || name.includes('disney+')) tmdbPlatformNames.push('Hotstar');
+          else if (name.includes('apple')) tmdbPlatformNames.push('Apple TV+');
+          else if (name.includes('zee5')) tmdbPlatformNames.push('Zee5');
+          else if (name.includes('sony') || name.includes('sonyliv')) tmdbPlatformNames.push('Sony LIV');
+          else if (name.includes('jio')) tmdbPlatformNames.push('JioCinema');
+        }
+
+        // Merge: catalog platforms + TMDB flatrate platforms (deduplicated)
+        const allPlatforms = new Set([...availablePlatforms, ...tmdbPlatformNames]);
+        availablePlatforms = Array.from(allPlatforms);
+
+        // ── Step 2: Determine state ──
+        if (flatrate.length > 0) {
+          // Has streaming providers → STREAMING
+          isStreaming = true;
+          isUpcoming = false;
+          isInTheaters = false;
+        } else if (rent.length > 0 || buy.length > 0 || link) {
+          // Has rent/buy but NO flatrate → IN THEATERS (digital purchase only)
+          isStreaming = false;
+          isInTheaters = true;
+          isUpcoming = false;
+          expectedOttDate = await this.findExpectedOttDate(tmdbId, mediaType);
+        } else {
+          // No providers at all
+          const relDate = movie.releaseDate ? new Date(movie.releaseDate).getTime() : 0;
+          if (relDate > 0 && relDate > Date.now()) {
+            // Future release date → UPCOMING
+            isUpcoming = true;
+            isInTheaters = false;
+            isStreaming = false;
+          } else if (relDate > 0 && relDate <= Date.now()) {
+            // Past release but no providers → IN THEATERS (catalog may be wrong)
+            isInTheaters = true;
+            isStreaming = false;
+            expectedOttDate = await this.findExpectedOttDate(tmdbId, mediaType);
+          }
+          // relDate === 0: no date known, leave defaults
         }
       } catch (e) {
-        this.logger.warn(`[Providers] Failed to fetch watch providers for ${tmdbId}: ${e}`);
+        this.logger.warn(`[Availability] Failed to detect status for ${tmdbId}: ${e}`);
       }
     }
 
-    // Detect theatrical-only content — always check TMDB, even when catalog has platforms
-    // A movie can be "listed" in a catalog (e.g. Netflix) but not actually streaming yet
-    let isInTheaters = false;
-    let expectedOttDate: string | undefined = undefined;
+    return {
+      ...movie,
+      availablePlatforms,
+      isStreaming,
+      isInTheaters,
+      isUpcoming,
+      expectedOttDate,
+    };
+  }
 
-    if (tmdbId && !movie.isSeries) {
-      try {
-        const providers = await this.tmdb(`movie/${tmdbId}/watch/providers`);
-        const regionResults = providers?.results?.[this.region] || providers?.results?.['IN'] || providers?.results?.['US'] || {};
-        const flatrate = regionResults.flatrate || [];  // actual streaming
-        const rent = regionResults.rent || [];          // rent/buy = theatrical/digital
-        const buy = regionResults.buy || [];
-        const link = regionResults.link || '';
-
-        // Case 1: No streaming providers at all → definitely not on OTT
-        if (flatrate.length === 0) {
-          // Has rent/buy (theatrical/digital purchase) but no flatrate streaming
-          if (rent.length > 0 || buy.length > 0 || link) {
-            isInTheaters = true;
-          }
-          // No providers at all but release date already passed → theatrical-only
-          else if (rent.length === 0 && buy.length === 0 && !link) {
-            const relDate = movie.releaseDate ? new Date(movie.releaseDate).getTime() : 0;
-            if (relDate > 0 && relDate < Date.now()) {
-              isInTheaters = true;
-            }
-          }
-        }
-
-        // Case 2: Catalog says platform X but TMDB says it's NOT on flatrate streaming
-        // → catalog listing is pre-release or inaccurate → theatrical-only
-        if (!isInTheaters && flatrate.length === 0 && availablePlatforms.length > 0) {
-          const tmdbProviders = flatrate.map((fp: any) => (fp.provider_name || '').toLowerCase());
-          const catalogHasStreaming = availablePlatforms.some((ap: string) =>
-            tmdbProviders.some((tp: string) => ap.toLowerCase().includes(tp))
-          );
-          if (!catalogHasStreaming) {
-            isInTheaters = true;
-          }
-        }
-
-        // Try to find digital/OTT release date from TMDB release_dates
-        if (isInTheaters) {
-          try {
-            const details2 = await this.tmdb(`movie/${tmdbId}?append_to_response=release_dates`);
-            if (details2?.release_dates?.results) {
-              for (const rd of details2.release_dates.results) {
-                if (rd.iso_3166_1 === this.region || rd.iso_3166_1 === 'IN' || rd.iso_3166_1 === 'US') {
-                  for (const d of rd.release_dates || []) {
-                    if (d.type === 4 || d.type === 6) { // 4 = Digital, 6 = TV
-                      expectedOttDate = this.adjustAirDateForRegion(d.release_date);
-                      break;
-                    }
-                  }
-                }
-                if (expectedOttDate) break;
+  /**
+   * Find expected OTT/streaming release date from TMDB release_dates.
+   * Looks for type 4 (Digital) or type 6 (TV) release certifications.
+   */
+  private async findExpectedOttDate(tmdbId: string, mediaType: string): Promise<string | undefined> {
+    try {
+      const details = await this.tmdb(`${mediaType}/${tmdbId}?append_to_response=release_dates`);
+      if (details?.release_dates?.results) {
+        for (const rd of details.release_dates.results) {
+          if (rd.iso_3166_1 === this.region || rd.iso_3166_1 === 'IN' || rd.iso_3166_1 === 'US') {
+            for (const d of rd.release_dates || []) {
+              // type 4 = Digital, type 6 = TV
+              if ((d.type === 4 || d.type === 6) && d.release_date) {
+                return d.release_date;
               }
             }
-          } catch {}
+          }
         }
-      } catch (e) {
-        this.logger.warn(`[Theaters] Failed to detect theatrical status for ${tmdbId}: ${e}`);
+        // Fallback: any country with digital release
+        for (const rd of details.release_dates.results) {
+          for (const d of rd.release_dates || []) {
+            if ((d.type === 4 || d.type === 6) && d.release_date) {
+              return d.release_date;
+            }
+          }
+        }
       }
-    }
-
-    return { ...movie, availablePlatforms, isInTheaters, expectedOttDate };
-//    return { ...movie, availablePlatforms };
+    } catch {}
+    return undefined;
   }
 
   async getSeasonEpisodes(
