@@ -1603,15 +1603,7 @@ export class MoviesService implements OnModuleInit {
       const cacheKey = `${id}_${seasonNumber}_${platform}`;
       const cached = this.seasonEpisodesCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) {
-        // Return consistent object format from cache
-        if (Array.isArray(cached.episodes)) {
-          return {
-            episodes: cached.episodes,
-            totalEpisodes: cached.totalEpisodes ?? cached.episodes.length,
-            releasedEpisodes: cached.releasedEpisodes ?? cached.episodes.length,
-            isAiring: cached.isAiring ?? false,
-          } as any;
-        }
+        // Always return plain array for backward compatibility
         return cached.episodes;
       }
       // Expired entry — remove it and re-fetch
@@ -1723,16 +1715,10 @@ export class MoviesService implements OnModuleInit {
         releasedEpisodes: releasedCount,
         isAiring,
         expiresAt: Date.now() + (finalEpisodes.length > 0 ? this.SEASON_CACHE_TTL_MS : 5 * 60 * 1000),
-      });
+      });      this.logger.log(`[Episodes] Loaded ${releasedCount}/${totalEpisodes} released episodes for ${id} season ${seasonNumber}${isAiring ? " (airing)" : ""}`);
 
-      this.logger.log(`[Episodes] Loaded ${releasedCount}/${totalEpisodes} released episodes for ${id} season ${seasonNumber}${isAiring ? " (airing)" : ""}`);
-
-      return {
-        episodes: finalEpisodes,
-        totalEpisodes,
-        releasedEpisodes: releasedCount,
-        isAiring,
-      } as any;
+      // Return plain array for backward compatibility with frontend
+      return finalEpisodes as any;
     } catch (err) {
       this.logger.warn(
         `[Episodes] Failed to load season ${seasonNumber} for ${id}: ${err}`,
