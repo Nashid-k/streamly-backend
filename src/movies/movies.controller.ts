@@ -19,8 +19,20 @@ function setCache(
 ) {
   res.setHeader(
     "Cache-Control",
-    `public, max-age=${maxAgeSeconds}, stale-while-revalidate=${staleWhileRevalidateSeconds}`,
+    `public, max-age=${maxAgeSeconds}, stale-while-revalidate=${staleWhileRevalidateSeconds}, must-revalidate`,
   );
+  res.setHeader("Vary", "Accept, Accept-Encoding, Origin");
+}
+
+/** No-cache for critical dynamic data */
+function setNoCache(res: Response) {
+  res.setHeader(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate",
+  );
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Vary", "Accept, Accept-Encoding, Origin");
 }
 
 @Controller("api/movies")
@@ -173,7 +185,7 @@ export class MoviesController {
       | "sonyliv"
       | "jio" = "netflix",
   ): Promise<Movie> {
-    setCache(res, 86400); // 24-hour cache for metadata
+    setCache(res, 300, 60); // 5-min browser cache with 60s stale-while-revalidate
     return this.moviesService.getMovieById(id, platform);
   }
 
@@ -201,7 +213,7 @@ export class MoviesController {
       "jio",
     ];
     if (!validPlatforms.includes(platform)) platform = "netflix";
-    setCache(res, 86400); // 24-hour cache for similar movies
+    setCache(res, 600, 120); // 10-min cache for similar movies
     return this.moviesService.getSimilarMovies(id, platform);
   }
 

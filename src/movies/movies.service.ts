@@ -280,7 +280,7 @@ private encodeUrl(url: string): string {
     const data = await this.tmdbAdapter.get(path, params);
 
     try {
-      await this.cacheManager.set(cacheKey, data, 24 * 60 * 60 * 1000); // 24 hours
+      await this.cacheManager.set(cacheKey, data, 60 * 60 * 1000); // 1 hour
     } catch (e) {
       this.logger.warn(`Redis SET failed: ${e.message}`);
     }
