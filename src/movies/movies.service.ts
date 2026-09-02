@@ -89,8 +89,8 @@ export class MoviesService implements OnModuleInit {
   );
   private readonly genres = new Map<number, string>();
   private lastCatalogError: string | undefined;
-  private readonly seasonEpisodesCache = new Map<string, { episodes: Episode[]; expiresAt: number; totalEpisodes?: number; releasedEpisodes?: number; isAiring?: boolean }>();
-  private readonly SEASON_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+  // seasonEpisodesCache removed — was causing stale empty results during Render cold starts.
+  // Episodes are fetched fresh from TMDB every time (tmdbAdapter already bypasses Redis cache).
 
   private readonly state: Record<PlatformKey, PlatformState> =
     Object.fromEntries(
@@ -1600,15 +1600,6 @@ export class MoviesService implements OnModuleInit {
     }
 
     try {
-      const cacheKey = `${id}_${seasonNumber}_${platform}`;
-      const cached = this.seasonEpisodesCache.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now()) {
-        // Always return plain array for backward compatibility
-        return cached.episodes;
-      }
-      // Expired entry — remove it and re-fetch
-      if (cached) this.seasonEpisodesCache.delete(cacheKey);
-
       // Extract TMDB ID from movie object or from the id string
       const tmdbId =
         movie?.tmdbId ??
@@ -1708,14 +1699,7 @@ export class MoviesService implements OnModuleInit {
         isAiring = true;
       }
 
-      // Cache results (1h for episodes, 5min for empty to avoid hammering)
-      this.seasonEpisodesCache.set(cacheKey, {
-        episodes: finalEpisodes,
-        totalEpisodes,
-        releasedEpisodes: releasedCount,
-        isAiring,
-        expiresAt: Date.now() + (finalEpisodes.length > 0 ? this.SEASON_CACHE_TTL_MS : 5 * 60 * 1000),
-      });      this.logger.log(`[Episodes] Loaded ${releasedCount}/${totalEpisodes} released episodes for ${id} season ${seasonNumber}${isAiring ? " (airing)" : ""}`);
+      this.logger.log(`[Episodes] Loaded ${releasedCount}/${totalEpisodes} released episodes for ${id} season ${seasonNumber}${isAiring ? " (airing)" : ""}`);
 
       // Return plain array for backward compatibility with frontend
       return finalEpisodes as any;
