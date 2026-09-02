@@ -1600,27 +1600,52 @@ private encodeUrl(url: string): string {
       }
     }
 
-    // Detect theatrical-only content (in theaters, not yet on OTT)
+    // Detect theatrical-only content — always check TMDB, even when catalog has platforms
+    // A movie can be "listed" in a catalog (e.g. Netflix) but not actually streaming yet
     let isInTheaters = false;
     let expectedOttDate: string | undefined = undefined;
 
-    if (tmdbId && availablePlatforms.length === 0) {
+    if (tmdbId && !movie.isSeries) {
       try {
-        const mediaType = movie.isSeries ? 'tv' : 'movie';
-        const providers = await this.tmdb(`${mediaType}/${tmdbId}/watch/providers`);
+        const providers = await this.tmdb(`movie/${tmdbId}/watch/providers`);
         const regionResults = providers?.results?.[this.region] || providers?.results?.['IN'] || providers?.results?.['US'] || {};
-        const flatrate = regionResults.flatrate || [];
-        const rent = regionResults.rent || [];
+        const flatrate = regionResults.flatrate || [];  // actual streaming
+        const rent = regionResults.rent || [];          // rent/buy = theatrical/digital
         const buy = regionResults.buy || [];
         const link = regionResults.link || '';
 
-        // If there are rent/buy but no flatrate (streaming), movie is theatrical or pre-OTT
-        if (flatrate.length === 0 && (rent.length > 0 || buy.length > 0 || link)) {
-          isInTheaters = true;
-          // Try to find digital/OTT release date from TMDB release_dates
+        // Case 1: No streaming providers at all → definitely not on OTT
+        if (flatrate.length === 0) {
+          // Has rent/buy (theatrical/digital purchase) but no flatrate streaming
+          if (rent.length > 0 || buy.length > 0 || link) {
+            isInTheaters = true;
+          }
+          // No providers at all but release date already passed → theatrical-only
+          else if (rent.length === 0 && buy.length === 0 && !link) {
+            const relDate = movie.releaseDate ? new Date(movie.releaseDate).getTime() : 0;
+            if (relDate > 0 && relDate < Date.now()) {
+              isInTheaters = true;
+            }
+          }
+        }
+
+        // Case 2: Catalog says platform X but TMDB says it's NOT on flatrate streaming
+        // → catalog listing is pre-release or inaccurate → theatrical-only
+        if (!isInTheaters && flatrate.length === 0 && availablePlatforms.length > 0) {
+          const tmdbProviders = flatrate.map((fp: any) => (fp.provider_name || '').toLowerCase());
+          const catalogHasStreaming = availablePlatforms.some((ap: string) =>
+            tmdbProviders.some((tp: string) => ap.toLowerCase().includes(tp))
+          );
+          if (!catalogHasStreaming) {
+            isInTheaters = true;
+          }
+        }
+
+        // Try to find digital/OTT release date from TMDB release_dates
+        if (isInTheaters) {
           try {
-            const details2 = await this.tmdb(`${mediaType}/${tmdbId}?append_to_response=release_dates`);
-            if (mediaType === 'movie' && details2?.release_dates?.results) {
+            const details2 = await this.tmdb(`movie/${tmdbId}?append_to_response=release_dates`);
+            if (details2?.release_dates?.results) {
               for (const rd of details2.release_dates.results) {
                 if (rd.iso_3166_1 === this.region || rd.iso_3166_1 === 'IN' || rd.iso_3166_1 === 'US') {
                   for (const d of rd.release_dates || []) {
@@ -1634,13 +1659,6 @@ private encodeUrl(url: string): string {
               }
             }
           } catch {}
-        }
-        // Also: no providers at all but already released → likely theatrical-only
-        if (flatrate.length === 0 && rent.length === 0 && buy.length === 0 && !link) {
-          const relDate = movie.releaseDate ? new Date(movie.releaseDate).getTime() : 0;
-          if (relDate > 0 && relDate < Date.now()) {
-            isInTheaters = true;
-          }
         }
       } catch (e) {
         this.logger.warn(`[Theaters] Failed to detect theatrical status for ${tmdbId}: ${e}`);
