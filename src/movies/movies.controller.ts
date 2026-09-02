@@ -295,4 +295,23 @@ export class MoviesController {
     setCache(res, 86400); // 24-hour browser cache
     return this.moviesService.getExternalIds(id, platform);
   }
+
+  @Get("airing")
+  async getAiringThisWeek(
+    @Res({ passthrough: true }) res: Response,
+    @Query("platform")
+    platform:
+      | "netflix"
+      | "prime"
+      | "hotstar"
+      | "appletv"
+      | "zee5"
+      | "sonyliv"
+      | "jio"
+      | "all" = "all",
+  ) {
+    setCache(res, 300, 60);
+    return this.moviesService.getAiringThisWeek(platform as any);
+  }
+
 }

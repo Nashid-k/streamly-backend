@@ -1749,7 +1749,52 @@ export class MoviesService implements OnModuleInit {
     }
   }
 
-  async searchMovies(
+  
+  async getAiringThisWeek(
+    platform:
+      | "netflix"
+      | "prime"
+      | "hotstar"
+      | "appletv"
+      | "zee5"
+      | "sonyliv"
+      | "jio"
+      | "all" = "all",
+  ): Promise<Movie[]> {
+    const platforms: Array<"netflix" | "prime" | "hotstar" | "appletv" | "zee5" | "sonyliv" | "jio"> =
+      platform === "all" ? ALL_PLATFORMS : [platform as any];
+
+    await Promise.all(platforms.map((p) => this.ensureCatalog(p)));
+
+    const nextWeek = new Date();
+    nextWeek.setDate(nextWeek.getDate() + 14);
+    const nextWeekStr = nextWeek.toISOString().split("T")[0];
+
+    const allMoviesMap = new Map<string, Movie>();
+    for (const p of platforms) {
+      for (const movie of this.state[p].movies.values()) {
+        if (!movie.isSeries) continue;
+        const key = movie.tmdbId || movie.id;
+        if (allMoviesMap.has(key)) continue;
+        allMoviesMap.set(key, movie);
+      }
+    }
+
+    const airingMovies = Array.from(allMoviesMap.values()).filter(
+      (m) => m.nextEpisode?.releaseDate && m.nextEpisode.releaseDate <= nextWeekStr,
+    );
+
+    airingMovies.sort((a, b) => {
+      const da = a.nextEpisode?.releaseDate || '';
+      const db = b.nextEpisode?.releaseDate || '';
+      return da.localeCompare(db);
+    });
+
+    this.logger.log(`[Airing] Found ${airingMovies.length} airing series across ${platforms.join(', ')}`);
+    return airingMovies.map((m) => this.toLightweightMovie(m) as Movie);
+  }
+
+async searchMovies(
     query: string,
     genre?: string,
     platform:
