@@ -97,7 +97,21 @@ export class MoviesService implements OnModuleInit {
       ALL_PLATFORMS.map((p) => [p, new PlatformState()]),
     ) as Record<PlatformKey, PlatformState>;
 
-  private encodeUrl(url: string): string {
+  
+  // Convert US air_date to Indian release date (US Sunday = India Monday)
+  private adjustAirDateForRegion(airDate: string): string {
+    if (!airDate || this.region !== 'IN') return airDate;
+    try {
+      const d = new Date(airDate + 'T00:00:00Z');
+      // Add 1 day for Indian timezone (US evening = India next morning)
+      d.setUTCDate(d.getUTCDate() + 1);
+      return d.toISOString().split('T')[0];
+    } catch {
+      return airDate;
+    }
+  }
+
+private encodeUrl(url: string): string {
     if (!url) return "";
     const secret = process.env.URL_ENCRYPTION_KEY || "STREAMLY_SECURE";
     const obfuscated = url
@@ -467,7 +481,7 @@ export class MoviesService implements OnModuleInit {
           `Episode ${item.next_episode_to_air.episode_number}`,
         seasonNumber: item.next_episode_to_air.season_number,
         episodeNumber: item.next_episode_to_air.episode_number,
-        releaseDate: item.next_episode_to_air.air_date,
+        releaseDate: this.adjustAirDateForRegion(item.next_episode_to_air.air_date),
       };
     }
 
@@ -1445,7 +1459,7 @@ export class MoviesService implements OnModuleInit {
             title: details.next_episode_to_air.name || `Episode ${details.next_episode_to_air.episode_number}`,
             seasonNumber: details.next_episode_to_air.season_number,
             episodeNumber: details.next_episode_to_air.episode_number,
-            releaseDate: details.next_episode_to_air.air_date,
+            releaseDate: this.adjustAirDateForRegion(details.next_episode_to_air.air_date),
           };
         }
 
@@ -1705,7 +1719,7 @@ export class MoviesService implements OnModuleInit {
           episodeNumber: e,
           seasonNumber: s,
           thumbnailUrl: this.image(ep.still_path) || movie?.backdropUrl || "",
-          airDate: ep.air_date || "",
+          airDate: this.adjustAirDateForRegion(ep.air_date || ""),
         };
       });
 
