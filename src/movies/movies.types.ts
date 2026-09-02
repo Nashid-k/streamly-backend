@@ -16,6 +16,7 @@ export interface Episode {
   embedUrl?: string;
   sources?: StreamSource[];
   airDate?: string;
+  releaseDate?: string;
 }
 
 export interface SeasonEpisodesResponse {
@@ -53,7 +54,7 @@ export interface Movie {
   isAnime?: boolean;
   seasonsCount?: number;
   episodes?: Episode[];
-  nextEpisode?: Episode;
+  nextEpisode?: { title?: string; seasonNumber?: number; episodeNumber?: number; releaseDate?: string; airDate?: string; };
   genres: string[];
   cast: any[];
   director: string;

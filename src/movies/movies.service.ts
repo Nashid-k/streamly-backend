@@ -1439,6 +1439,16 @@ export class MoviesService implements OnModuleInit {
           movie.seasonsCount = details.number_of_seasons || 1;
         }
 
+        // Enrich nextEpisode for airing series
+        if (details.next_episode_to_air) {
+          movie.nextEpisode = {
+            title: details.next_episode_to_air.name || `Episode ${details.next_episode_to_air.episode_number}`,
+            seasonNumber: details.next_episode_to_air.season_number,
+            episodeNumber: details.next_episode_to_air.episode_number,
+            releaseDate: details.next_episode_to_air.air_date,
+          };
+        }
+
         if (details.external_ids?.imdb_id) {
           movie.imdbId = details.external_ids.imdb_id;
         }
