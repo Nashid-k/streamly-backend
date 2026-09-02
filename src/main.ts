@@ -42,8 +42,15 @@ async function bootstrap() {
 
   // Keep browser access scoped to this application's frontend.
   app.enableCors({
-    origin: allowedOrigins,
-    methods: "GET,HEAD,POST,DELETE,OPTIONS",
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+      // Allow requests with no origin (mobile apps, curl, server-to-server)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS blocked for origin: ${origin}`));
+      }
+    },
+    methods: "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
     exposedHeaders: ["Cache-Control"],
   });
 

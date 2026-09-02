@@ -24,6 +24,7 @@ export class StreamController {
   private readonly logger = new Logger(StreamController.name);
   private engines: Map<string, EngineEntry> = new Map();
   private readonly ENGINE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+  private readonly MAX_ENGINES = 5; // Max concurrent torrent engines
 
   private destroyEngine(magnet: string) {
     const entry = this.engines.get(magnet);
@@ -38,6 +39,13 @@ export class StreamController {
   }
 
   private getOrCreateEngine(magnet: string): any {
+    // Evict oldest engine if at capacity
+    if (!this.engines.has(magnet) && this.engines.size >= this.MAX_ENGINES) {
+      const oldestKey = Array.from(this.engines.entries())
+        .sort((a, b) => a[1].lastAccessed - b[1].lastAccessed)[0]?.[0];
+      if (oldestKey) this.destroyEngine(oldestKey);
+    }
+
     const existing = this.engines.get(magnet);
     if (existing) {
       // Reset TTL on access

@@ -105,7 +105,8 @@ export class MoviesService implements OnModuleInit {
 
 private encodeUrl(url: string): string {
     if (!url) return "";
-    const secret = process.env.URL_ENCRYPTION_KEY || "STREAMLY_SECURE";
+    const secret = process.env.URL_ENCRYPTION_KEY;
+    if (!secret) throw new Error('URL_ENCRYPTION_KEY env var is required');
     const obfuscated = url
       .split("")
       .map((char, i) =>
@@ -2180,7 +2181,7 @@ async searchMovies(
 
   private filterGenre(titles: Movie[], genre?: string) {
     if (!genre || genre === "All") return titles;
-    return titles.filter((item) => item.genres?.includes(genre));
+    return titles.filter((item) => Array.isArray(item.genres) && item.genres.includes(genre));
   }
 
   /**
@@ -2458,15 +2459,10 @@ async searchMovies(
 
       // Heuristic: intros are typically 0–90 seconds
       // Use a deterministic seed based on id+season+episode for stable results
-      const seed = `${id}-s${season}e${episode}`
-        .split("")
-        .reduce((acc, c) => acc + c.charCodeAt(0), 0);
-      const introLength = 60 + (seed % 30); // 60–89 seconds
-
       return {
-        hasIntro: true,
+        hasIntro: false,
         startSeconds: 0,
-        endSeconds: introLength,
+        endSeconds: 0,
       };
     } catch (e) {
       this.logger.error(`Failed to get intro timings for ${id}`, e);

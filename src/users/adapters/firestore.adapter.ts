@@ -71,14 +71,14 @@ export class FirestoreAdapter {
         .collection("users")
         .doc(this.uid)
         .update({ myList: FieldValue.arrayRemove(movieId) })
-        .catch();
+        .catch((e) => this.logger.error(`Firestore toggleMyList remove failed: ${e.message}`));
     } else {
       this.user.myList.push(movieId);
       this.db
         .collection("users")
         .doc(this.uid)
         .update({ myList: FieldValue.arrayUnion(movieId) })
-        .catch();
+        .catch((e) => this.logger.error(`Firestore toggleMyList add failed: ${e.message}`));
       isSaved = true;
     }
     return { myList: this.user.myList, isSaved };
@@ -91,7 +91,7 @@ export class FirestoreAdapter {
       .collection("users")
       .doc(this.uid)
       .update({ preferencesByProfile: this.user.preferencesByProfile })
-      .catch();
+      .catch((e) => this.logger.error(`Firestore updatePreferences failed: ${e.message}`));
     return this.user.preferencesByProfile[this.user.currentProfileId];
   }
 
@@ -118,7 +118,7 @@ export class FirestoreAdapter {
       .collection("users")
       .doc(this.uid)
       .update({ continueWatching: this.user.continueWatching })
-      .catch();
+      .catch((e) => this.logger.error(`Firestore updateContinueWatching failed: ${e.message}`));
     return this.user.continueWatching;
   }
 
@@ -130,7 +130,7 @@ export class FirestoreAdapter {
       .collection("users")
       .doc(this.uid)
       .update({ continueWatching: this.user.continueWatching })
-      .catch();
+      .catch((e) => this.logger.error(`Firestore removeContinueWatching failed: ${e.message}`));
     return this.user.continueWatching;
   }
 }

@@ -57,6 +57,29 @@ export class HlsProxyController {
       throw new HttpException("Missing url", HttpStatus.BAD_REQUEST);
     }
 
+    // SSRF protection: block requests to private/internal IPs and non-HTTP protocols
+    try {
+      const parsedUrl = new URL(url);
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        throw new HttpException('Only HTTP/HTTPS URLs are allowed', HttpStatus.BAD_REQUEST);
+      }
+      const hostname = parsedUrl.hostname;
+      if (
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '::1' ||
+        hostname.startsWith('10.') ||
+        hostname.startsWith('192.168.') ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+        /^0\./.test(hostname)
+      ) {
+        throw new HttpException('Requests to private/internal networks are blocked', HttpStatus.FORBIDDEN);
+      }
+    } catch (e) {
+      if (e instanceof HttpException) throw e;
+      throw new HttpException('Invalid URL', HttpStatus.BAD_REQUEST);
+    }
+
     try {
       const upstreamRes = await fetch(url, {
         headers: {
