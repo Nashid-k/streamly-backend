@@ -160,15 +160,20 @@ export class MoviesController {
       | "zee5"
       | "sonyliv"
       | "jio" = "netflix",
-  ): Promise<{ url: string }> {
-    setCache(res, 3600);
-    return this.moviesService.getStreamUrl(
+  ): Promise<{ url: string; error?: string }> {
+    const result = await this.moviesService.getStreamUrl(
       id,
       server ? parseInt(server, 10) : 0,
       season ? parseInt(season, 10) : undefined,
       episode ? parseInt(episode, 10) : undefined,
       platform,
     );
+    if (result.error) {
+      res.status(403);
+    } else {
+      setCache(res, 3600);
+    }
+    return result;
   }
 
   @Get(":id")

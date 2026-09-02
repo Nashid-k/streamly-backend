@@ -2483,7 +2483,16 @@ async searchMovies(
     season?: number,
     episode?: number,
     platform: PlatformKey = "netflix",
-  ): Promise<{ url: string }> {
+  ): Promise<{ url: string; error?: string }> {
+    // Block streaming for theatrical-only content
+    try {
+      const movie = await this.getMovieById(id, platform);
+      if (movie?.isInTheaters) {
+        this.logger.warn(`[Stream] Blocked stream for theatrical-only: ${id}`);
+        return { url: '', error: 'This content is currently in theaters and not yet available for streaming.' };
+      }
+    } catch {}
+
     const numericId = id.replace(/^tmdb-(tv|movie)-/, "");
 
     const SERVERS = [
