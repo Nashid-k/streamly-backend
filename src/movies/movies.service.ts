@@ -1666,8 +1666,10 @@ export class MoviesService implements OnModuleInit {
       }
 
       const rawEpisodes = seasonData.episodes || [];
+      const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
 
-      const episodes: Episode[] = rawEpisodes.map((ep: any) => {
+      // Map all raw episodes
+      const allEpisodes: Episode[] = rawEpisodes.map((ep: any) => {
         const s = seasonNumber;
         const e = ep.episode_number;
 
@@ -1683,14 +1685,31 @@ export class MoviesService implements OnModuleInit {
         };
       });
 
+      // Filter: only return episodes that have already aired (air_date <= today)
+      // Episodes without an air_date are included (assumed available)
+      const releasedEpisodes = allEpisodes.filter(
+        (ep) => !ep.airDate || ep.airDate <= today,
+      );
+
+      const totalEpisodes = allEpisodes.length;
+      const releasedCount = releasedEpisodes.length;
+      // A season is "airing" if it has unreleased episodes (not all have aired yet)
+      const isAiring = releasedCount < totalEpisodes;
+
       // Cache results (1h for episodes, 5min for empty to avoid hammering)
       this.seasonEpisodesCache.set(cacheKey, {
-        episodes,
-        expiresAt: Date.now() + (episodes.length > 0 ? this.SEASON_CACHE_TTL_MS : 5 * 60 * 1000),
+        episodes: releasedEpisodes,
+        expiresAt: Date.now() + (releasedEpisodes.length > 0 ? this.SEASON_CACHE_TTL_MS : 5 * 60 * 1000),
       });
 
-      this.logger.log(`[Episodes] Loaded ${episodes.length} episodes for ${id} season ${seasonNumber}`);
-      return episodes;
+      this.logger.log(`[Episodes] Loaded ${releasedCount}/${totalEpisodes} released episodes for ${id} season ${seasonNumber}${isAiring ? " (airing)" : ""}`);
+
+      return {
+        episodes: releasedEpisodes,
+        totalEpisodes,
+        releasedEpisodes: releasedCount,
+        isAiring,
+      } as any;
     } catch (err) {
       this.logger.warn(
         `[Episodes] Failed to load season ${seasonNumber} for ${id}: ${err}`,

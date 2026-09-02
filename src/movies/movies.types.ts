@@ -15,6 +15,14 @@ export interface Episode {
   videoUrl: string;
   embedUrl?: string;
   sources?: StreamSource[];
+  airDate?: string;
+}
+
+export interface SeasonEpisodesResponse {
+  episodes: Episode[];
+  totalEpisodes: number;
+  releasedEpisodes: number;
+  isAiring: boolean;
 }
 
 export interface Movie {
