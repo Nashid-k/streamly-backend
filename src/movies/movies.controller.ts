@@ -7,7 +7,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { Response } from "express";
-import { CacheInterceptor, CacheTTL } from "@nestjs/cache-manager";
+import { CacheInterceptor } from "@nestjs/cache-manager";
 import { MoviesService } from "./movies.service";
 import { Movie, Category } from "./movies.types";
 
@@ -206,8 +206,6 @@ export class MoviesController {
   }
 
   @Get(":id/season/:seasonNumber")
-  @UseInterceptors(CacheInterceptor)
-  @CacheTTL(5) // 5 seconds — episodes should refresh quickly to avoid stale empty data
   async getSeasonEpisodes(
     @Res({ passthrough: true }) res: Response,
     @Param("id") id: string,
@@ -222,7 +220,7 @@ export class MoviesController {
       | "sonyliv"
       | "jio" = "netflix",
   ) {
-    setCache(res, 300, 60); // 5-min browser cache with 1-min stale-while-revalidate for episodes
+    setCache(res, 60, 30); // 1-min browser cache with 30s stale-while-revalidate for episodes
     // Clamp season number to a sane range to prevent abuse
     const season = Math.min(
       Math.max(Number.parseInt(seasonNumber, 10) || 1, 1),
