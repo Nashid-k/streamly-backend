@@ -1562,6 +1562,28 @@ export class MoviesService implements OnModuleInit {
       }
     }
 
+    // Fallback: if no platforms found from catalog, check TMDB watch providers
+    if (availablePlatforms.length === 0 && tmdbId && movie.isSeries) {
+      try {
+        const mediaType = movie.isSeries ? 'tv' : 'movie';
+        const providers = await this.tmdb(`${mediaType}/${tmdbId}/watch/providers`);
+        const regionResults = providers?.results?.[this.region] || providers?.results?.['US'] || {};
+        const flatrate = regionResults.flatrate || [];
+        for (const fp of flatrate) {
+          const name = (fp.provider_name || '').toLowerCase();
+          if (name.includes('netflix')) availablePlatforms.push('Netflix');
+          else if (name.includes('amazon') || name.includes('prime')) availablePlatforms.push('Prime Video');
+          else if (name.includes('hotstar') || name.includes('disney')) availablePlatforms.push('Hotstar');
+          else if (name.includes('apple')) availablePlatforms.push('Apple TV+');
+          else if (name.includes('zee5')) availablePlatforms.push('Zee5');
+          else if (name.includes('sony') || name.includes('sonyliv')) availablePlatforms.push('Sony LIV');
+          else if (name.includes('jio')) availablePlatforms.push('JioCinema');
+        }
+      } catch (e) {
+        this.logger.warn(`[Providers] Failed to fetch watch providers for ${tmdbId}: ${e}`);
+      }
+    }
+
     return { ...movie, availablePlatforms };
   }
 
