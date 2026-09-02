@@ -98,17 +98,9 @@ export class MoviesService implements OnModuleInit {
     ) as Record<PlatformKey, PlatformState>;
 
   
-  // Convert US air_date to Indian release date (US Sunday = India Monday)
+  // Return raw TMDB date — frontend handles timezone conversion per-user
   private adjustAirDateForRegion(airDate: string): string {
-    if (!airDate || this.region !== 'IN') return airDate;
-    try {
-      const d = new Date(airDate + 'T00:00:00Z');
-      // Add 1 day for Indian timezone (US evening = India next morning)
-      d.setUTCDate(d.getUTCDate() + 1);
-      return d.toISOString().split('T')[0];
-    } catch {
-      return airDate;
-    }
+    return airDate || '';
   }
 
 private encodeUrl(url: string): string {
