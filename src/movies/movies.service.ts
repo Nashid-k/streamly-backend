@@ -1617,33 +1617,59 @@ private encodeUrl(url: string): string {
         const allPlatforms = new Set([...availablePlatforms, ...tmdbPlatformNames]);
         availablePlatforms = Array.from(allPlatforms);
 
-        // ── Step 2: Determine state ──
+        // ── Step 2: Check OTT release date from release_dates endpoint ──
+        // TMDB release_date is theatrical/broadcast date, NOT OTT date.
+        // The OTT date (type 4=Digital, type 6=TV) is the real streaming date.
+        const ottReleaseDate = await this.findExpectedOttDate(tmdbId, mediaType);
+        if (ottReleaseDate) {
+          expectedOttDate = ottReleaseDate;
+        }
+        const ottTimestamp = ottReleaseDate ? new Date(ottReleaseDate).getTime() : 0;
+        const today = Date.now();
+
+        // ── Step 3: Determine state ──
         if (flatrate.length > 0) {
           // Has streaming providers → STREAMING
           isStreaming = true;
           isUpcoming = false;
           isInTheaters = false;
         } else if (rent.length > 0 || buy.length > 0 || link) {
-          // Has rent/buy but NO flatrate → IN THEATERS (digital purchase only)
-          isStreaming = false;
-          isInTheaters = true;
-          isUpcoming = false;
-          expectedOttDate = await this.findExpectedOttDate(tmdbId, mediaType);
+          // Has rent/buy but NO flatrate → check if OTT date has passed
+          if (ottTimestamp > 0 && ottTimestamp <= today) {
+            // OTT date passed but no flatrate yet → STREAMING (data delayed)
+            isStreaming = true;
+            isUpcoming = false;
+            isInTheaters = false;
+          } else {
+            // OTT date in future or unknown → IN THEATERS
+            isStreaming = false;
+            isInTheaters = true;
+            isUpcoming = false;
+          }
         } else {
           // No providers at all
-          const relDate = movie.releaseDate ? new Date(movie.releaseDate).getTime() : 0;
-          if (relDate > 0 && relDate > Date.now()) {
-            // Future release date → UPCOMING
+          if (ottTimestamp > 0 && ottTimestamp <= today) {
+            // OTT date passed but no providers yet → STREAMING (data delayed)
+            isStreaming = true;
+            isUpcoming = false;
+            isInTheaters = false;
+          } else if (ottTimestamp > 0 && ottTimestamp > today) {
+            // OTT date in future → UPCOMING
             isUpcoming = true;
             isInTheaters = false;
             isStreaming = false;
-          } else if (relDate > 0 && relDate <= Date.now()) {
-            // Past release but no providers → IN THEATERS (catalog may be wrong)
-            isInTheaters = true;
-            isStreaming = false;
-            expectedOttDate = await this.findExpectedOttDate(tmdbId, mediaType);
+          } else {
+            // No OTT date known, fall back to theatrical release_date
+            const relDate = movie.releaseDate ? new Date(movie.releaseDate).getTime() : 0;
+            if (relDate > 0 && relDate > today) {
+              isUpcoming = true;
+              isInTheaters = false;
+              isStreaming = false;
+            } else if (relDate > 0 && relDate <= today) {
+              isInTheaters = true;
+              isStreaming = false;
+            }
           }
-          // relDate === 0: no date known, leave defaults
         }
       } catch (e) {
         this.logger.warn(`[Availability] Failed to detect status for ${tmdbId}: ${e}`);
