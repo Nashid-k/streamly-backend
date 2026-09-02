@@ -70,6 +70,10 @@ export interface Movie {
   platform?: string;
   /** Populated by cross-platform search — which platforms carry this title */
   availablePlatforms?: string[];
+  /** True if movie is in theaters / not yet on OTT streaming */
+  isInTheaters?: boolean;
+  /** Expected OTT/streaming release date (if known) */
+  expectedOttDate?: string;
 }
 
 export interface Category {

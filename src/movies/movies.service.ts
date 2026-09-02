@@ -534,6 +534,8 @@ private encodeUrl(url: string): string {
           : [],
       subtitleLanguages: [],
       nextEpisode: nextEpisode,
+      isInTheaters: false,
+      expectedOttDate: undefined as string | undefined,
     };
   }
 
@@ -1577,7 +1579,7 @@ private encodeUrl(url: string): string {
     }
 
     // Fallback: if no platforms found from catalog, check TMDB watch providers
-    if (availablePlatforms.length === 0 && tmdbId && movie.isSeries) {
+    if (availablePlatforms.length === 0 && tmdbId) {
       try {
         const mediaType = movie.isSeries ? 'tv' : 'movie';
         const providers = await this.tmdb(`${mediaType}/${tmdbId}/watch/providers`);
@@ -1598,7 +1600,55 @@ private encodeUrl(url: string): string {
       }
     }
 
-    return { ...movie, availablePlatforms };
+    // Detect theatrical-only content (in theaters, not yet on OTT)
+    let isInTheaters = false;
+    let expectedOttDate: string | undefined = undefined;
+
+    if (tmdbId && availablePlatforms.length === 0) {
+      try {
+        const mediaType = movie.isSeries ? 'tv' : 'movie';
+        const providers = await this.tmdb(`${mediaType}/${tmdbId}/watch/providers`);
+        const regionResults = providers?.results?.[this.region] || providers?.results?.['IN'] || providers?.results?.['US'] || {};
+        const flatrate = regionResults.flatrate || [];
+        const rent = regionResults.rent || [];
+        const buy = regionResults.buy || [];
+        const link = regionResults.link || '';
+
+        // If there are rent/buy but no flatrate (streaming), movie is theatrical or pre-OTT
+        if (flatrate.length === 0 && (rent.length > 0 || buy.length > 0 || link)) {
+          isInTheaters = true;
+          // Try to find digital/OTT release date from TMDB release_dates
+          try {
+            const details2 = await this.tmdb(`${mediaType}/${tmdbId}?append_to_response=release_dates`);
+            if (mediaType === 'movie' && details2?.release_dates?.results) {
+              for (const rd of details2.release_dates.results) {
+                if (rd.iso_3166_1 === this.region || rd.iso_3166_1 === 'IN' || rd.iso_3166_1 === 'US') {
+                  for (const d of rd.release_dates || []) {
+                    if (d.type === 4 || d.type === 6) { // 4 = Digital, 6 = TV
+                      expectedOttDate = this.adjustAirDateForRegion(d.release_date);
+                      break;
+                    }
+                  }
+                }
+                if (expectedOttDate) break;
+              }
+            }
+          } catch {}
+        }
+        // Also: no providers at all but already released → likely theatrical-only
+        if (flatrate.length === 0 && rent.length === 0 && buy.length === 0 && !link) {
+          const relDate = movie.releaseDate ? new Date(movie.releaseDate).getTime() : 0;
+          if (relDate > 0 && relDate < Date.now()) {
+            isInTheaters = true;
+          }
+        }
+      } catch (e) {
+        this.logger.warn(`[Theaters] Failed to detect theatrical status for ${tmdbId}: ${e}`);
+      }
+    }
+
+    return { ...movie, availablePlatforms, isInTheaters, expectedOttDate };
+//    return { ...movie, availablePlatforms };
   }
 
   async getSeasonEpisodes(
