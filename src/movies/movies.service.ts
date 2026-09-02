@@ -1919,15 +1919,27 @@ async searchMovies(
           let score = 0;
           const t = m.title.toLowerCase();
 
-          if (t === normalized) score += 100;
-          else if (t.startsWith(normalized)) score += 50;
-          else if (t.includes(normalized)) score += 10;
+          // ── Title matching: prefix > word-boundary > contains ──
+          if (t === normalized) score += 200;
+          else if (t.startsWith(normalized)) score += 100;
+          else {
+            // Word-boundary: "hi" matches "Hi Nanna" or "Oh, Hi!" but NOT "Michi"
+            const wbRe = new RegExp('(?:^|[\\s,\\-:!\\.\\(\\)\\[\\]])' + normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+            if (wbRe.test(t)) score += 80;
+            else if (t.includes(normalized)) score += 5;
+          }
 
-          if (
-            m.originalTitle &&
-            m.originalTitle.toLowerCase().includes(normalized)
-          )
-            score += 5;
+          // Same word-boundary priority for originalTitle
+          if (m.originalTitle) {
+            const ot = m.originalTitle.toLowerCase();
+            if (ot === normalized) score += 60;
+            else if (ot.startsWith(normalized)) score += 30;
+            else {
+              const otWb = new RegExp('(?:^|[\\s,\\-:!\\.\\(\\)\\[\\]])' + normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+              if (otWb.test(ot)) score += 25;
+              else if (ot.includes(normalized)) score += 3;
+            }
+          }
 
           if (
             m.genres &&
