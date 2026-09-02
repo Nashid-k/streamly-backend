@@ -226,7 +226,16 @@ export class MoviesController {
       Math.max(Number.parseInt(seasonNumber, 10) || 1, 1),
       50,
     );
-    return this.moviesService.getSeasonEpisodes(id, season, platform);
+    const result = await this.moviesService.getSeasonEpisodes(id, season, platform);
+    // Add metadata as response headers (episodes body stays a plain array for compat)
+    if (result && typeof result === 'object' && 'episodes' in result) {
+      const r = result as any;
+      res.setHeader('X-Total-Episodes', String(r.totalEpisodes ?? 0));
+      res.setHeader('X-Released-Episodes', String(r.releasedEpisodes ?? 0));
+      res.setHeader('X-Is-Airing', String(r.isAiring ?? false));
+      return r.episodes;
+    }
+    return result;
   }
 
   @Get(":id/recommendations")

@@ -1701,8 +1701,14 @@ export class MoviesService implements OnModuleInit {
 
       this.logger.log(`[Episodes] Loaded ${releasedCount}/${totalEpisodes} released episodes for ${id} season ${seasonNumber}${isAiring ? " (airing)" : ""}`);
 
-      // Return plain array for backward compatibility with frontend
-      return finalEpisodes as any;
+      // Return object with episodes + metadata. Controller extracts episodes for the body
+      // and puts metadata in response headers for backward compatibility.
+      return {
+        episodes: finalEpisodes,
+        totalEpisodes,
+        releasedEpisodes: releasedCount,
+        isAiring,
+      } as any;
     } catch (err) {
       this.logger.warn(
         `[Episodes] Failed to load season ${seasonNumber} for ${id}: ${err}`,
