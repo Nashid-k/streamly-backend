@@ -1925,6 +1925,49 @@ private encodeUrl(url: string): string {
     return airingMovies.map((m) => this.toLightweightMovie(m) as Movie);
   }
 
+  async getTrendingThisWeek(
+    platform:
+      | "netflix"
+      | "prime"
+      | "hotstar"
+      | "appletv"
+      | "zee5"
+      | "sonyliv"
+      | "jio"
+      | "all" = "all",
+  ): Promise<Movie[]> {
+    const platforms: PlatformKey[] =
+      platform === "all" ? ALL_PLATFORMS : [platform as any];
+
+    await Promise.all(platforms.map((p) => this.ensureCatalog(p)));
+
+    const trendKeys = new Set([
+      "trending-movies",
+      "trending-series",
+      "trending-anime",
+    ]);
+
+    const uniqueMap = new Map<string, Movie>();
+    for (const p of platforms) {
+      for (const cat of this.state[p].categories) {
+        if (!trendKeys.has(cat.id)) continue;
+        for (const m of cat.movies) {
+          const key = m.tmdbId || m.id;
+          if (!uniqueMap.has(key)) uniqueMap.set(key, m);
+        }
+      }
+    }
+
+    const trending = Array.from(uniqueMap.values()).map(
+      (m) => this.toLightweightMovie(m) as Movie,
+    );
+
+    this.logger.log(
+      `[Trending] Found ${trending.length} trending titles across ${platforms.join(", ")}`,
+    );
+    return trending;
+  }
+
 async searchMovies(
     query: string,
     genre?: string,
@@ -2543,14 +2586,14 @@ async searchMovies(
       {
         url: (tmdbId: string, s?: number, e?: number) =>
           s
-            ? `https://vidlink.pro/tv/${tmdbId}/${s}/${e}`
-            : `https://vidlink.pro/movie/${tmdbId}`,
+            ? `https://cinesrc.st/embed/tv/${tmdbId}?s=${s}&e=${e}&autoplay=true`
+            : `https://cinesrc.st/embed/movie/${tmdbId}?autoplay=true`,
       },
       {
         url: (tmdbId: string, s?: number, e?: number) =>
           s
-            ? `https://vidsrc.pm/embed/tv?tmdb=${tmdbId}&season=${s}&episode=${e}`
-            : `https://vidsrc.pm/embed/movie?tmdb=${tmdbId}`,
+            ? `https://vidlink.pro/tv/${tmdbId}/${s}/${e}`
+            : `https://vidlink.pro/movie/${tmdbId}`,
       },
       {
         url: (tmdbId: string, s?: number, e?: number) =>
@@ -2561,8 +2604,8 @@ async searchMovies(
       {
         url: (tmdbId: string, s?: number, e?: number) =>
           s
-            ? `https://vidsrc.pro/embed/tv?tmdb=${tmdbId}&season=${s}&episode=${e}`
-            : `https://vidsrc.pro/embed/movie?tmdb=${tmdbId}`,
+            ? `https://vidsrcme.ru/embed/tv?tmdb=${tmdbId}&season=${s}&episode=${e}`
+            : `https://vidsrcme.ru/embed/movie?tmdb=${tmdbId}`,
       },
     ];
 
