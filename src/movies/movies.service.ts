@@ -10,7 +10,6 @@ import { CACHE_MANAGER } from "@nestjs/cache-manager";
 import { Cache } from "cache-manager";
 import { TmdbAdapter } from "./adapters/tmdb.adapter";
 import { RapidApiAdapter } from "./adapters/rapidapi.adapter";
-import { PushNotificationAdapter } from "./adapters/push-notification.adapter";
 import { Category, Movie, Episode } from "./movies.types";
 import {
   PlatformState,
@@ -234,7 +233,6 @@ private encodeUrl(url: string): string {
 
   private tmdbAdapter: TmdbAdapter;
   private rapidApiAdapter: RapidApiAdapter;
-  private pushNotificationAdapter: PushNotificationAdapter;
 
   private isConfigured() {
     return Boolean(this.readToken || this.apiKey);
@@ -320,13 +318,6 @@ private encodeUrl(url: string): string {
     return data;
   }
 
-  private getPushNotification() {
-    if (!this.pushNotificationAdapter) {
-      this.pushNotificationAdapter = new PushNotificationAdapter();
-    }
-    return this.pushNotificationAdapter;
-  }
-
   private async loadGenres() {
     try {
       const lists = await Promise.all(
@@ -373,25 +364,7 @@ private encodeUrl(url: string): string {
           .filter(Boolean)
           .map((id: string) => (id.includes("/") ? id.split("/")[1] : id));
 
-        // Check for completely new IDs to trigger a push notification
-        const oldSet = state.realRecentlyAddedTmdbIds || new Set();
-        const freshIds = newIds.filter((id) => !oldSet.has(id));
-
-        if (freshIds.length > 0 && oldSet.size > 0) {
-          // We found a new release that wasn't there in the last fetch!
-          const firstNewShow = Object.values(newData.shows || {}).find(
-            (s: any) =>
-              s.tmdbId === freshIds[0] || s.tmdbId?.includes(freshIds[0]),
-          );
-          if (firstNewShow) {
-            this.getPushNotification().broadcastNewRelease(
-              (firstNewShow as any).title || "A new title",
-              platform,
-              freshIds[0],
-            );
-          }
-        }
-
+        // Track the current recent set so status badges stay stable
         state.realRecentlyAddedTmdbIds = new Set(newIds.map(String));
       }
 
@@ -1100,6 +1073,41 @@ private encodeUrl(url: string): string {
       )
       .slice(0, 10)
       .map((m) => this.toLightweightMovie(m) as Movie);
+  }
+
+  async getAllTop10Movies(): Promise<Movie[]> {
+    const platforms: Array<
+      "netflix" | "prime" | "hotstar" | "appletv" | "zee5" | "sonyliv" | "jio"
+    > = ["netflix", "prime", "hotstar", "appletv", "zee5", "sonyliv", "jio"];
+    const nameMap: Record<string, string> = {
+      netflix: "Netflix",
+      prime: "Prime Video",
+      hotstar: "Hotstar",
+      appletv: "Apple TV+",
+      zee5: "Zee5",
+      sonyliv: "Sony LIV",
+      jio: "JioCinema",
+    };
+    const results = await Promise.all(
+      platforms.map(async (p) => {
+        try {
+          return (await this.getTop10Movies(p)).map((m) => ({
+            ...m,
+            source: p,
+            sourceName: nameMap[p],
+          }));
+        } catch {
+          return [] as Movie[];
+        }
+      }),
+    );
+    const uniqueMap = new Map<string, Movie>();
+    for (const list of results) {
+      for (const m of list) {
+        if (!uniqueMap.has(m.id)) uniqueMap.set(m.id, m);
+      }
+    }
+    return Array.from(uniqueMap.values()).slice(0, 10);
   }
 
   async getFeaturedMovie(
@@ -2475,43 +2483,6 @@ async searchMovies(
     return scored;
   }
 
-  // ─── Intro Skip Timings ──────────────────────────────────────────
-
-  async getIntroTimings(
-    id: string,
-    season?: number,
-    episode?: number,
-    platform:
-      | "netflix"
-      | "prime"
-      | "hotstar"
-      | "appletv"
-      | "zee5"
-      | "sonyliv"
-      | "jio" = "netflix",
-  ): Promise<{ hasIntro: boolean; startSeconds: number; endSeconds: number }> {
-    try {
-      await this.ensureCatalog(platform);
-      const movie = await this.getMovieById(id, platform);
-
-      // Only series episodes typically have intros
-      if (!movie.isSeries || !season || !episode) {
-        return { hasIntro: false, startSeconds: 0, endSeconds: 0 };
-      }
-
-      // Heuristic: intros are typically 0–90 seconds
-      // Use a deterministic seed based on id+season+episode for stable results
-      return {
-        hasIntro: false,
-        startSeconds: 0,
-        endSeconds: 0,
-      };
-    } catch (e) {
-      this.logger.error(`Failed to get intro timings for ${id}`, e);
-      return { hasIntro: false, startSeconds: 0, endSeconds: 0 };
-    }
-  }
-
   async getExternalIds(
     id: string,
     platform:
@@ -2561,56 +2532,5 @@ async searchMovies(
       this.logger.error(`Failed to fetch person details for ${personId}`, e);
       throw e;
     }
-  }
-
-  async getStreamUrl(
-    id: string,
-    serverIndex: number = 0,
-    season?: number,
-    episode?: number,
-    platform: PlatformKey = "netflix",
-  ): Promise<{ url: string; error?: string }> {
-    // Block streaming for theatrical-only content
-    try {
-      const movie = await this.getMovieById(id, platform);
-      if (movie?.isInTheaters) {
-        this.logger.warn(`[Stream] Blocked stream for theatrical-only: ${id}`);
-        return { url: '', error: 'This content is currently in theaters and not yet available for streaming.' };
-      }
-    } catch {}
-
-    const numericId = id.replace(/^tmdb-(tv|movie)-/, "");
-
-    const SERVERS = [
-      {
-        url: (tmdbId: string, s?: number, e?: number) =>
-          s
-            ? `https://cinesrc.st/embed/tv/${tmdbId}?s=${s}&e=${e}&autoplay=true`
-            : `https://cinesrc.st/embed/movie/${tmdbId}?autoplay=true`,
-      },
-      {
-        url: (tmdbId: string, s?: number, e?: number) =>
-          s
-            ? `https://vidlink.pro/tv/${tmdbId}/${s}/${e}`
-            : `https://vidlink.pro/movie/${tmdbId}`,
-      },
-      {
-        url: (tmdbId: string, s?: number, e?: number) =>
-          s
-            ? `https://www.2embed.cc/embedtv/${tmdbId}&s=${s}&e=${e}`
-            : `https://www.2embed.cc/embed/${tmdbId}`,
-      },
-      {
-        url: (tmdbId: string, s?: number, e?: number) =>
-          s
-            ? `https://vidsrcme.ru/embed/tv?tmdb=${tmdbId}&season=${s}&episode=${e}`
-            : `https://vidsrcme.ru/embed/movie?tmdb=${tmdbId}`,
-      },
-    ];
-
-    const idx =
-      serverIndex >= 0 && serverIndex < SERVERS.length ? serverIndex : 0;
-    const url = SERVERS[idx].url(numericId, season, episode);
-    return { url };
   }
 }

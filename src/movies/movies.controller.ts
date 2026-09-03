@@ -102,9 +102,11 @@ export class MoviesController {
       | "appletv"
       | "zee5"
       | "sonyliv"
-      | "jio" = "netflix",
+      | "jio"
+      | "all" = "all",
   ): Promise<Movie[]> {
-    setCache(res, 120);
+    setCache(res, 300, 60);
+    if (platform === "all") return this.moviesService.getAllTop10Movies();
     return this.moviesService.getTop10Movies(platform);
   }
 
@@ -176,38 +178,6 @@ export class MoviesController {
   ) {
     setCache(res, 300, 60);
     return this.moviesService.getAiringThisWeek(platform as any);
-  }
-
-  @Get(":id/stream-url")
-  async getStreamUrl(
-    @Res({ passthrough: true }) res: Response,
-    @Param("id") id: string,
-    @Query("server") server?: string,
-    @Query("season") season?: string,
-    @Query("episode") episode?: string,
-    @Query("platform")
-    platform:
-      | "netflix"
-      | "prime"
-      | "hotstar"
-      | "appletv"
-      | "zee5"
-      | "sonyliv"
-      | "jio" = "netflix",
-  ): Promise<{ url: string; error?: string }> {
-    const result = await this.moviesService.getStreamUrl(
-      id,
-      server ? parseInt(server, 10) : 0,
-      season ? parseInt(season, 10) : undefined,
-      episode ? parseInt(episode, 10) : undefined,
-      platform,
-    );
-    if (result.error) {
-      res.status(403);
-    } else {
-      setCache(res, 3600);
-    }
-    return result;
   }
 
   @Get(":id")
@@ -305,28 +275,6 @@ export class MoviesController {
   ): Promise<Movie[]> {
     setCache(res, 300);
     return this.moviesService.getRecommendations(id, platform);
-  }
-
-  @Get(":id/intro")
-  async getIntroTimings(
-    @Res({ passthrough: true }) res: Response,
-    @Param("id") id: string,
-    @Query("season") season?: string,
-    @Query("episode") episode?: string,
-    @Query("platform")
-    platform:
-      | "netflix"
-      | "prime"
-      | "hotstar"
-      | "appletv"
-      | "zee5"
-      | "sonyliv"
-      | "jio" = "netflix",
-  ) {
-    setCache(res, 86400); // 24-hour cache for intro timings
-    const s = season ? parseInt(season, 10) : undefined;
-    const e = episode ? parseInt(episode, 10) : undefined;
-    return this.moviesService.getIntroTimings(id, s, e, platform);
   }
 
   @Get(":id/external_ids")

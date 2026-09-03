@@ -3,9 +3,6 @@ import { CacheModule } from "@nestjs/cache-manager";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { APP_GUARD } from "@nestjs/core";
 import { MoviesModule } from "./movies/movies.module";
-import { UsersModule } from "./users/users.module";
-import { AuthModule } from "./auth/auth.module";
-import { FirebaseModule } from "./firebase/firebase.module";
 import { AppController } from "./app.controller";
 
 import * as Joi from "joi";
@@ -56,9 +53,11 @@ const cacheConfig = CacheModule.registerAsync({
         TMDB_READ_TOKEN: Joi.string().optional(),
         RAPIDAPI_KEY: Joi.string().optional(),
         FRONTEND_URL: Joi.string().default("http://localhost:3000"),
-        FIREBASE_PROJECT_ID: Joi.string().required(),
-        FIREBASE_CLIENT_EMAIL: Joi.string().required(),
-        FIREBASE_PRIVATE_KEY: Joi.string().required(),
+        // Firebase is used by the frontend directly; the backend no longer
+        // requires credentials. Kept optional for compatibility with existing env.
+        FIREBASE_PROJECT_ID: Joi.string().optional(),
+        FIREBASE_CLIENT_EMAIL: Joi.string().optional(),
+        FIREBASE_PRIVATE_KEY: Joi.string().optional(),
       }),
     }),
     // Rate Limiting: Max 30 requests per 10 seconds per IP
@@ -69,10 +68,7 @@ const cacheConfig = CacheModule.registerAsync({
       },
     ]),
     cacheConfig,
-    FirebaseModule,
     MoviesModule,
-    UsersModule,
-    AuthModule,
   ],
   controllers: [AppController],
   providers: [
