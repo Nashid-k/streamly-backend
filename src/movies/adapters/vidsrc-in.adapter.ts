@@ -3,7 +3,7 @@ import { BaseAdapter } from "./base.adapter";
 
 export class VidsrcInAdapter extends BaseAdapter implements StreamAdapter {
   name = "vidsrc.in";
-  index = 4;
+  index = 5;
 
   async resolve(
     tmdbId: string,

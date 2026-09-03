@@ -4,10 +4,8 @@ import {
   Param,
   Query,
   Res,
-  UseInterceptors,
 } from "@nestjs/common";
 import { Response } from "express";
-import { CacheInterceptor } from "@nestjs/cache-manager";
 import { MoviesService } from "./movies.service";
 import { Movie, Category } from "./movies.types";
 

@@ -3,7 +3,7 @@ import { BaseAdapter } from "./base.adapter";
 
 export class EmbedSuAdapter extends BaseAdapter implements StreamAdapter {
   name = "embed.su";
-  index = 5;
+  index = 6;
 
   async resolve(
     tmdbId: string,

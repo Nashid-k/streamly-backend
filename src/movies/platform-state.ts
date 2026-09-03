@@ -6,8 +6,6 @@ export type PlatformKey =
 export class PlatformState {
   movies = new Map<string, Movie>();
   tmdbIdIndex = new Map<string, string>();
-  titleIndex = new Map<string, string[]>();
-  genreIndex = new Map<string, string[]>();
   categories: any[] = [];
   realRecentlyAddedTmdbIds = new Set<string>();
   realLeavingSoonTmdbIds = new Set<string>();
