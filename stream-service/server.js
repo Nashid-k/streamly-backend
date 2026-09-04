@@ -5,7 +5,29 @@ import { chromium } from 'playwright';
 console.log('[BOOT] Stream service starting...');
 
 const app = express();
-app.use(cors());
+
+// Configure CORS for production
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3001',
+  'https://streamlyvercelin.vercel.app',
+];
+const frontendUrl = process.env.FRONTEND_URL;
+if (frontendUrl) {
+  allowedOrigins.push(...frontendUrl.split(',').map(u => u.trim()).filter(Boolean));
+}
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, server-to-server)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS blocked for origin: ${origin}`));
+    }
+  },
+  methods: ['GET', 'POST'],
+}));
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
