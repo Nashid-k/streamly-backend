@@ -71,15 +71,27 @@ async function getBrowser() {
   // Force a fresh launch if cached browser is closed or a launch failed before
   if (!browser || !browser.isConnected()) {
     if (browser) { try { await browser.close(); } catch {} browser = null; }
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
-    });
+    const commonArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+    ];
+    const tryLaunch = async (opts) => chromium.launch(opts);
+    try {
+      browser = await tryLaunch({ headless: true, args: commonArgs });
+    } catch (launchErr) {
+      // Local dev fallback: connect to a system Chrome/Chromium install
+      try {
+        browser = await tryLaunch({ headless: true, channel: 'chrome', args: commonArgs });
+      } catch (chromeErr) {
+        try {
+          browser = await tryLaunch({ headless: true, channel: 'chromium', args: commonArgs });
+        } catch (chromiumErr) {
+          throw new Error(`No usable browser: ${launchErr.message.split('\n')[0]} / ${chromeErr.message.split('\n')[0]}`);
+        }
+      }
+    }
     browser.on('disconnected', () => { browser = null; });
   }
   return browser;
@@ -106,25 +118,31 @@ app.get('/api/stream', async (req, res) => {
     return res.json({ ...cached.data, cached: true });
   }
 
-  // Serialize access to the shared browser (Render Free tier has limited RAM)
-  while (browserBusy) {
-    await new Promise(r => setTimeout(r, 200));
-  }
-  browserBusy = true;
-  let context = null;
-  let page = null;
-  try {
-    const b = await getBrowser();
-    const cinesrcUrl = getCineSrcUrl(tmdbId, type, season, episode);
-    console.log(`[STREAM] Extracting tmdbId=${tmdbId} type=${type}`);
+// Serialize access to the shared browser (Render Free tier has limited RAM)
+    while (browserBusy) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+    browserBusy = true;
+    let context = null;
+    let page = null;
+    try {
+      const b = await getBrowser();
+      const cinesrcUrl = getCineSrcUrl(tmdbId, type, season, episode);
+      console.log(`[STREAM] Extracting tmdbId=${tmdbId} type=${type}`);
 
-    const capturedUrls = [];
-    const subtitleUrls = [];        // subtitle VTT URLs from subs.bright67.online
-    const thumbnailUrls = [];       // thumbnail VTT URLs
-    const providerSeq = [];         // ordered provider names CineSrc walks through
-    const distinctHosts = new Set(); // distinct CDN hosts that emitted streams
-    const PROVIDER_NAMES = ['nebula','lisbon','surge','spark','storm','aurora','rush','blizzard','mist','thunder','wave','paris','luna','sturm','brisa'];
-    const startTime = Date.now();
+      const capturedUrls = [];
+      const subtitleUrls = [];        // subtitle VTT URLs from subs.bright67.online
+      const thumbnailUrls = [];       // thumbnail VTT URLs
+      const providerSeq = [];         // ordered provider names CineSrc walks through
+      const distinctHosts = new Set(); // distinct CDN hosts that emitted streams
+      const PROVIDER_NAMES = ['nebula','lisbon','surge','spark','storm','aurora','rush','blizzard','mist','thunder','wave','paris','luna','sturm','brisa'];
+      // Session-Key Encrypted (SKE) streams — e.g. the "thunder" fallback CDN
+      // (ice.bright67.online) which serves content behind CineSrc's proof-of-work
+      // session. These need the real browser session to decrypt, so a direct
+      // m3u8 can never be extracted; flag them so the caller can fall back to a
+      // native iframe player instead of waiting the full cycle.
+      const skeStreams = new Set();
+      const startTime = Date.now();
 
     const openContext = async () => {
       if (context) await context.close().catch(() => {});
@@ -136,6 +154,8 @@ app.get('/api/stream', async (req, res) => {
         if (/m3u8|\.mpd|manifest/i.test(url) && !url.includes('cinesrc.st')) {
           capturedUrls.push(url);
           try { distinctHosts.add(new URL(url).hostname); } catch {}
+          // ice.bright67/?m3u8=<token> — session-key-encrypted (thunder class).
+          if (url.includes('ice.bright67') || /[?&]m3u8=/.test(url)) skeStreams.add(url);
         }
         // Capture subtitle VTT files
         if (url.includes('subs.bright67.online') && (url.includes('.vtt') || url.includes('format=vtt') || url.includes('search?id='))) {
@@ -181,11 +201,21 @@ app.get('/api/stream', async (req, res) => {
     // -> Mist -> Thunder -> ...). On titles not served by the fast direct hosts,
     // the regional/fallback CDN (e.g. ice.bright67) is only reached ~19s in, so we
     // must NOT reload (a reload resets the whole cycle) — just wait long enough.
-    // ~35s covers the full multi-provider sweep single-pass.
+    // ~35s covers the full multi-provider sweep single-pass. If a session-encrypted
+    // stream appears (thunder class), a playable direct m3u8 will never surface, so
+    // bail early and let the caller use the native iframe.
     const deadline = Date.now() + 35000;
-    while (capturedUrls.length === 0 && Date.now() < deadline) {
-      await page.waitForTimeout(300);
+    while (Date.now() < deadline) {
+      if (capturedUrls.length > 0) {
+        const noDirectYet = !capturedUrls.some(u => /\.(m3u8|mpd)\?|\.m3u8$/i.test(u) || (u.includes('master.m3u8') && !/[?&]m3u8=/.test(u)));
+        // Session-encrypted (thunder) streams arrive after the direct sweep; once
+        // we see one and no direct playable URL has appeared, stop early.
+        if (skeStreams.size > 0 && noDirectYet) break;
+        if (capturedUrls.some(u => !/[?&]m3u8=/.test(u) && /\.(m3u8|mpd)(\?|$)/i.test(u))) break;
+      }
+      await page.waitForTimeout(250);
     }
+    const sawSkeOnly = capturedUrls.length > 0 && skeStreams.size === capturedUrls.length;
 
     // A directly-playable master is an open .m3u8 with no DRM token. Prefer it
     // over AES/query-param tokens like "?m3u8=…" which are session-encrypted and
@@ -217,13 +247,20 @@ app.get('/api/stream', async (req, res) => {
 
     if (!bestUrl) {
       // No direct-playable URL. If we only saw encrypted token URLs (e.g. the
-      // ice.bright67 "?m3u8=…" form), that content is session-protected and can
-      // only be watched through CineSrc's own iframe player — the frontend
+      // ice.bright67 "?m3u8=…" form), that content is session-key-protected and
+      // can only be watched through CineSrc's own iframe player — the frontend
       // auto-falls-back to the iframe in that case.
-      const detail = encryptedOnly
-        ? { error: 'Stream is session/AES-protected — playable only via iframe', encrypted: true, allUrls: [...new Set(capturedUrls)].slice(0, 5) }
-        : { error: 'No stream URL found' };
-      return res.status(404).json({ ...detail, ...base });
+      if (sawSkeOnly || encryptedOnly) {
+        const detail = {
+          error: 'Stream is session/AES-protected — playable only via iframe',
+          encrypted: true,
+          requiresIframe: true,
+          cinesrcUrl,
+          allUrls: [...new Set(capturedUrls)].slice(0, 5),
+        };
+        return res.status(404).json({ ...detail, ...base });
+      }
+      return res.status(404).json({ error: 'No stream URL found', ...base });
     }
 
     const data = {
