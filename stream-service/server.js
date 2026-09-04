@@ -252,36 +252,29 @@ app.get('/api/proxy', async (req, res) => {
     if (req.headers['if-range']) upstreamHeaders['If-Range'] = req.headers['if-range'];
 
     const response = await fetch(url, { headers: upstreamHeaders });
-
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
-    res.set('Content-Type', contentType);
 
-    const cl = response.headers.get('content-length');
-    if (cl) res.set('Content-Length', cl);
-    const cr = response.headers.get('content-range');
-    if (cr) res.set('Content-Range', cr);
+    // Read entire response into buffer so we can detect m3u8 by content signature
+    // (CDNs often serve m3u8 with wrong Content-Type or .jpg/.bin extensions)
+    const bodyBuffer = Buffer.from(await response.arrayBuffer());
+    const head = bodyBuffer.toString('utf8', 0, 64);
+    const isM3u8 = head.trimStart().startsWith('#EXTM3U') ||
+                   contentType.includes('mpegurl') || contentType.includes('x-mpegurl');
 
-    const isM3u8 = contentType.includes('mpegurl') || contentType.includes('x-mpegurl') || /\.m3u8(\?|$)/i.test(url);
     if (isM3u8) {
-      const text = await response.text();
+      const text = bodyBuffer.toString('utf8');
       const proxyBase = `https://${req.get('host')}/api/proxy?url=`;
       const rewritten = rewriteM3u8(text, url, proxyBase);
+      res.set('Content-Type', 'application/vnd.apple.mpegurl');
       res.set('Content-Length', Buffer.byteLength(rewritten));
       res.send(rewritten);
     } else {
-      if (response.body) {
-        const reader = response.body.getReader();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            res.write(Buffer.from(value));
-          }
-        } catch (e) {
-          console.error('[PROXY] stream error:', e.message);
-        }
-      }
-      res.end();
+      const cl = response.headers.get('content-length');
+      if (cl) res.set('Content-Length', cl);
+      const cr = response.headers.get('content-range');
+      if (cr) res.set('Content-Range', cr);
+      res.set('Content-Type', contentType);
+      res.end(bodyBuffer);
     }
   } catch (e) {
     console.error('[PROXY] error:', e.message);
