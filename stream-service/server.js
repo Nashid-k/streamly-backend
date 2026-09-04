@@ -36,6 +36,10 @@ function rewriteM3u8(content, originalUrl, proxyBase) {
 
 const app = express();
 
+// Render/Vercel terminate TLS at their edge; trust the X-Forwarded-Proto so
+// rewritten /api/proxy URLs keep the correct https:// scheme.
+app.set('trust proxy', true);
+
 // Configure CORS for production
 const allowedOrigins = [
   'http://localhost:5173',
@@ -230,7 +234,7 @@ app.get('/api/stream', async (req, res) => {
     try {
       if (bestUrl) {
         const h = new URL(bestUrl).hostname;
-        provider = h.includes('movieboxnoob') ? 'lisbon' : h.includes('bright67') ? 'nebula' : h;
+        provider = h.includes('movieboxnoob') ? 'lisbon' : h.includes('bright67') && !h.includes('ice.bright67') ? 'nebula' : h;
       }
     } catch {}
 
@@ -246,19 +250,26 @@ app.get('/api/stream', async (req, res) => {
     };
 
     if (!bestUrl) {
-      // No direct-playable URL. If we only saw encrypted token URLs (e.g. the
-      // ice.bright67 "?m3u8=…" form), that content is session-key-protected and
-      // can only be watched through CineSrc's own iframe player — the frontend
-      // auto-falls-back to the iframe in that case.
-      if (sawSkeOnly || encryptedOnly) {
-        const detail = {
-          error: 'Stream is session/AES-protected — playable only via iframe',
-          encrypted: true,
-          requiresIframe: true,
-          cinesrcUrl,
-          allUrls: [...new Set(capturedUrls)].slice(0, 5),
+      // No plain master URL. Two cases:
+      //  1) Only session-token streams arrived (the ice.bright67/?m3u8=<token>
+      //     "thunder" class). These are PoW-minted session URLs that ARE
+      //     directly HLS-playable through our proxy (verified end-to-end:
+      //     master -> variant -> MPEG-TS segment, no EXT-X-KEY). Serve the best
+      //     token URL so the Direct player streams it natively.
+      //  2) Truly nothing captured -> the caller falls back to the CineSrc iframe.
+      if ((sawSkeOnly || encryptedOnly) && capturedUrls.length > 0) {
+        const skeUrl = capturedUrls[0];
+        const data = {
+          streamUrl: skeUrl,
+          provider: 'thunder',
+          sessionProtected: true,
+          allUrls: [...new Set(capturedUrls)].slice(0, 8),
+          subtitles: [...new Set(subtitleUrls)],
+          thumbnails: [...new Set(thumbnailUrls)],
+          ...base,
         };
-        return res.status(404).json({ ...detail, ...base });
+        cache.set(cacheKey, { data, time: Date.now() });
+        return res.json(data);
       }
       return res.status(404).json({ error: 'No stream URL found', ...base });
     }
@@ -298,6 +309,17 @@ app.get('/api/proxy', async (req, res) => {
     const upstreamHeaders = {};
     if (req.headers.range) upstreamHeaders['Range'] = req.headers.range;
     if (req.headers['if-range']) upstreamHeaders['If-Range'] = req.headers['if-range'];
+    // Present a browser profile upstream for session-token CDNs (the
+    // PoW-protected ice.bright67 "thunder" class) — they reject bare/undici
+    // requests and, when served behind Cloudflare, can answer 522 without a
+    // normal UA. Plain direct CDNs (nebula etc.) keep the default headers.
+    const upstreamHost = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
+    if (/bright67|ice\./.test(upstreamHost)) {
+      upstreamHeaders['User-Agent'] =
+        'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36';
+      upstreamHeaders['Referer'] = 'https://cinesrc.st/';
+      upstreamHeaders['Origin'] = 'https://cinesrc.st';
+    }
 
     const response = await fetch(url, { headers: upstreamHeaders });
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
@@ -311,7 +333,7 @@ app.get('/api/proxy', async (req, res) => {
 
     if (isM3u8) {
       const text = bodyBuffer.toString('utf8');
-      const proxyBase = `https://${req.get('host')}/api/proxy?url=`;
+      const proxyBase = `${req.protocol}://${req.get('host')}/api/proxy?url=`;
       const rewritten = rewriteM3u8(text, url, proxyBase);
       res.set('Content-Type', 'application/vnd.apple.mpegurl');
       res.set('Content-Length', Buffer.byteLength(rewritten));
