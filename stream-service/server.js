@@ -119,7 +119,9 @@ app.get('/api/stream', async (req, res) => {
     console.log(`[STREAM] Extracting tmdbId=${tmdbId} type=${type}`);
 
     const capturedUrls = [];
-    const providerSeq = [];      // ordered provider names CineSrc walks through
+    const subtitleUrls = [];        // subtitle VTT URLs from subs.bright67.online
+    const thumbnailUrls = [];       // thumbnail VTT URLs
+    const providerSeq = [];         // ordered provider names CineSrc walks through
     const distinctHosts = new Set(); // distinct CDN hosts that emitted streams
     const PROVIDER_NAMES = ['nebula','lisbon','surge','spark','storm','aurora','rush','blizzard','mist','thunder','wave','paris','luna','sturm','brisa'];
     const startTime = Date.now();
@@ -130,11 +132,18 @@ app.get('/api/stream', async (req, res) => {
       page = await context.newPage();
       page.on('request', (request) => {
         const url = request.url();
-        // Catch m3u8 in a path (…/master.m3u8), as a query param (?m3u8=…),
-        // or DASH manifests, from any provider backend (nebula/ice/other CDNs).
+        // Capture m3u8 streams
         if (/m3u8|\.mpd|manifest/i.test(url) && !url.includes('cinesrc.st')) {
           capturedUrls.push(url);
           try { distinctHosts.add(new URL(url).hostname); } catch {}
+        }
+        // Capture subtitle VTT files
+        if (url.includes('subs.bright67.online') && (url.includes('.vtt') || url.includes('format=vtt') || url.includes('search?id='))) {
+          subtitleUrls.push(url);
+        }
+        // Capture thumbnail sprite sheets
+        if (url.includes('thumbnails.vtt') || url.includes('thumbnails/')) {
+          thumbnailUrls.push(url);
         }
       });
       // Record the provider names CineSrc displays in its "Trying streaming
@@ -221,6 +230,8 @@ app.get('/api/stream', async (req, res) => {
       streamUrl: bestUrl,
       provider,
       allUrls: [...new Set(capturedUrls)],
+      subtitles: [...new Set(subtitleUrls)],
+      thumbnails: [...new Set(thumbnailUrls)],
       ...base,
     };
 
