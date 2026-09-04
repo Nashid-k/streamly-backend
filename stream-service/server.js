@@ -4,6 +4,36 @@ import { chromium } from 'playwright';
 
 console.log('[BOOT] Stream service starting...');
 
+/* ── M3U8 URL rewriter ────────────────────────────────────────── */
+function resolveUrl(url, base) {
+  try {
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    if (url.startsWith('//')) return 'https:' + url;
+    return new URL(url, base).href;
+  } catch { return url; }
+}
+
+function rewriteM3u8(content, originalUrl, proxyBase) {
+  const baseUrl = originalUrl.substring(0, originalUrl.lastIndexOf('/') + 1);
+  return content.split('\n').map(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return line;
+    // Rewrite URI="..." in tags (#EXT-X-KEY, #EXT-X-MAP, etc.)
+    if (trimmed.startsWith('#') && /URI="/.test(trimmed)) {
+      return trimmed.replace(/URI="([^"]+)"/g, (_, uri) => {
+        const abs = resolveUrl(uri, baseUrl);
+        return `URI="${proxyBase}${encodeURIComponent(abs)}"`;
+      });
+    }
+    // Rewrite URL lines (variant playlists, segments)
+    if (!trimmed.startsWith('#') && !trimmed.startsWith('<')) {
+      const abs = resolveUrl(trimmed, baseUrl);
+      return `${proxyBase}${encodeURIComponent(abs)}`;
+    }
+    return line;
+  }).join('\n');
+}
+
 const app = express();
 
 // Configure CORS for production
@@ -204,6 +234,58 @@ app.get('/api/stream', async (req, res) => {
   } finally {
     browserBusy = false;
     if (context) await context.close().catch(() => {});
+  }
+});
+
+/* ── CORS Proxy ────────────────────────────────────────────────
+   Fetches any URL server-side and returns it with CORS headers.
+   For m3u8 content, rewrites internal URLs so sub-playlists and
+   segments also route through this proxy.
+   ────────────────────────────────────────────────────────────── */
+app.get('/api/proxy', async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).json({ error: 'url query param required' });
+
+  try {
+    const upstreamHeaders = {};
+    if (req.headers.range) upstreamHeaders['Range'] = req.headers.range;
+    if (req.headers['if-range']) upstreamHeaders['If-Range'] = req.headers['if-range'];
+
+    const response = await fetch(url, { headers: upstreamHeaders });
+
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    res.set('Content-Type', contentType);
+
+    const cl = response.headers.get('content-length');
+    if (cl) res.set('Content-Length', cl);
+    const cr = response.headers.get('content-range');
+    if (cr) res.set('Content-Range', cr);
+
+    const isM3u8 = contentType.includes('mpegurl') || contentType.includes('x-mpegurl') || /\.m3u8(\?|$)/i.test(url);
+    if (isM3u8) {
+      const text = await response.text();
+      const proxyBase = `https://${req.get('host')}/api/proxy?url=`;
+      const rewritten = rewriteM3u8(text, url, proxyBase);
+      res.set('Content-Length', Buffer.byteLength(rewritten));
+      res.send(rewritten);
+    } else {
+      if (response.body) {
+        const reader = response.body.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(Buffer.from(value));
+          }
+        } catch (e) {
+          console.error('[PROXY] stream error:', e.message);
+        }
+      }
+      res.end();
+    }
+  } catch (e) {
+    console.error('[PROXY] error:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
