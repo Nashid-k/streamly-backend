@@ -1063,16 +1063,24 @@ private encodeUrl(url: string): string {
       | "appletv"
       | "zee5"
       | "sonyliv"
-      | "jio" = "netflix",
+      | "jio"
+      | "all" = "all",
   ) {
-    await this.ensureCatalog(platform);
-    const allMovies = this.state[platform].categories.flatMap((c) => c.movies);
+    const platforms: PlatformKey[] =
+      platform === "all" ? ALL_PLATFORMS : [platform as PlatformKey];
+
+    await Promise.all(platforms.map((p) => this.ensureCatalog(p)));
+
     const uniqueMap = new Map<string, Movie>();
-    for (const m of allMovies) {
-      if (!uniqueMap.has(m.id)) uniqueMap.set(m.id, m);
+    for (const p of platforms) {
+      for (const m of this.state[p].categories.flatMap((c) => c.movies)) {
+        const key = m.tmdbId || m.id;
+        if (!uniqueMap.has(key)) uniqueMap.set(key, m);
+      }
     }
-    const uniqueMovies = Array.from(uniqueMap.values());
-    return uniqueMovies.map((m) => this.toLightweightMovie(m) as Movie);
+    return Array.from(uniqueMap.values()).map(
+      (m) => this.toLightweightMovie(m) as Movie,
+    );
   }
 
   async getTop10Movies(
@@ -2055,25 +2063,32 @@ async searchMovies(
       | "appletv"
       | "zee5"
       | "sonyliv"
-      | "jio" = "netflix",
+      | "jio"
+      | "all" = "netflix",
   ): Promise<{ movies: Movie[]; actor?: any }> {
     this.ensureConfigured();
     const normalized = query.trim().toLowerCase();
     const cacheKey = `${normalized}_${genre || "all"}`;
 
+    // Search is inherently cross-platform (combinedMoviesMap below merges every
+    // platform). "all" has no per-platform state, so alias it to netflix for
+    // cache + memory-movie storage; the merged result set is identical.
+    const statePlatform: PlatformKey =
+      platform === "all" ? "netflix" : (platform as PlatformKey);
+
     // Fast O(1) Search Query Cache Check
-    if (this.state[platform].searchCache.has(cacheKey)) {
-      return this.state[platform].searchCache.get(cacheKey)!;
+    if (this.state[statePlatform].searchCache.has(cacheKey)) {
+      return this.state[statePlatform].searchCache.get(cacheKey)!;
     }
 
     if (!normalized) {
       const allMovies = await this.getAllMovies(platform);
       const res = { movies: this.filterGenre(allMovies, genre) };
-      if (this.state[platform].searchCache.size > 100) {
-        const firstKey = this.state[platform].searchCache.keys().next().value;
-        if (firstKey) this.state[platform].searchCache.delete(firstKey);
+      if (this.state[statePlatform].searchCache.size > 100) {
+        const firstKey = this.state[statePlatform].searchCache.keys().next().value;
+        if (firstKey) this.state[statePlatform].searchCache.delete(firstKey);
       }
-      this.state[platform].searchCache.set(cacheKey, res);
+      this.state[statePlatform].searchCache.set(cacheKey, res);
       return res;
     }
 
@@ -2188,20 +2203,22 @@ async searchMovies(
 
       // ────────────────────────────────────────────────────────────
       // LIVE TMDB FALLBACK SEARCH
-      // If local search returns 0 results or weak matches, query TMDB live
-      // ────────────────────────────────────────────────────────────
+      // If local search returns 0 results or weak matches, query TMDB live.
+      // Short queries (>= 2 chars) are included: "dc", "mi" etc. are one-letter
+      // typos away from real titles and often collapse to nothing locally.
       const hasStrongLocalMatch =
         resultsWithScores.length > 0 && resultsWithScores[0].score >= 20;
-      if (!hasStrongLocalMatch && normalized.length > 2) {
+      if (!hasStrongLocalMatch && normalized.length >= 2) {
         this.logger.log(`Live TMDB Fallback Search triggered for: "${query}"`);
         try {
           const tmdbSearch = await this.tmdb("search/multi", {
             query: normalized,
           });
           if (tmdbSearch.results && tmdbSearch.results.length > 0) {
-            // Take top 5 to minimize N+1 provider lookups
+            // Take top 10 to minimize N+1 provider lookups while still
+            // surfacing lower-ranked (often regional) exact-title hits.
             const topHits = tmdbSearch.results
-              .slice(0, 5)
+              .slice(0, 10)
               .filter(
                 (m: any) => m.media_type === "movie" || m.media_type === "tv",
               );
@@ -2253,8 +2270,8 @@ async searchMovies(
                   availableOn.length > 0 ? availableOn : ["Other"];
 
                 // Cache into local memory so /movie/:id works when clicked
-                this.state[platform].movies.set(movieObj.id, movieObj);
-                this.state[platform].tmdbIdIndex.set(
+                this.state[statePlatform].movies.set(movieObj.id, movieObj);
+                this.state[statePlatform].tmdbIdIndex.set(
                   movieObj.tmdbId!,
                   movieObj.id,
                 );
@@ -2286,11 +2303,11 @@ async searchMovies(
       const resultObj = { movies: results, actor: undefined, suggestions };
 
       // Cache Search Result (LRU 100 limit per platform)
-      if (this.state[platform].searchCache.size > 100) {
-        const firstKey = this.state[platform].searchCache.keys().next().value;
-        if (firstKey) this.state[platform].searchCache.delete(firstKey);
+      if (this.state[statePlatform].searchCache.size > 100) {
+        const firstKey = this.state[statePlatform].searchCache.keys().next().value;
+        if (firstKey) this.state[statePlatform].searchCache.delete(firstKey);
       }
-      this.state[platform].searchCache.set(cacheKey, resultObj);
+      this.state[statePlatform].searchCache.set(cacheKey, resultObj);
 
       return resultObj;
     } catch (err) {

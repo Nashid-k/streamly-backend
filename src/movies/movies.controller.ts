@@ -123,7 +123,8 @@ export class MoviesController {
       | "appletv"
       | "zee5"
       | "sonyliv"
-      | "jio" = "netflix",
+      | "jio"
+      | "all" = "netflix",
   ): Promise<{ movies: Movie[]; actor?: any }> {
     res.setHeader("Cache-Control", "public, max-age=3600");
     const safeQuery = (query || "").slice(0, 200);
