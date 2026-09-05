@@ -1029,6 +1029,22 @@ private encodeUrl(url: string): string {
     };
   }
 
+  /**
+   * Resolve all platforms a movie is available on by checking tmdbIdIndex
+   * across all platform catalogs. Lightweight — no API calls.
+   */
+  private resolveAvailablePlatforms(tmdbId: string | undefined): string[] {
+    if (!tmdbId) return [];
+    const platforms: string[] = [];
+    for (const p of ALL_PLATFORMS) {
+      const catalogId = this.state[p].tmdbIdIndex.get(tmdbId);
+      if (catalogId && this.state[p].movies.has(catalogId)) {
+        platforms.push(PLATFORM_LABELS[p]);
+      }
+    }
+    return platforms;
+  }
+
   async getAllMovies(
     platform:
       | "netflix"
@@ -1107,7 +1123,15 @@ private encodeUrl(url: string): string {
         if (!uniqueMap.has(m.id)) uniqueMap.set(m.id, m);
       }
     }
-    return Array.from(uniqueMap.values()).slice(0, 10);
+    return Array.from(uniqueMap.values())
+      .map((m) => ({
+        ...m,
+        availablePlatforms:
+          m.availablePlatforms?.length
+            ? m.availablePlatforms
+            : this.resolveAvailablePlatforms(m.tmdbId),
+      }))
+      .slice(0, 10);
   }
 
   async getFeaturedMovie(
@@ -1233,6 +1257,17 @@ private encodeUrl(url: string): string {
       });
     }
 
+    // ── Enrich availablePlatforms for all aggregated movies ──
+    // Catalog movies lack availablePlatforms (only set during getMovieById).
+    // Build it from tmdbIdIndex so the frontend can show correct platform labels.
+    for (const cat of aggregated) {
+      for (const m of cat.movies) {
+        if (!m.availablePlatforms?.length) {
+          m.availablePlatforms = this.resolveAvailablePlatforms(m.tmdbId);
+        }
+      }
+    }
+
     const allMoviesList = Array.from(allUniqueMovies.values());
     const allGenres = new Set<string>();
     allMoviesList.forEach((m) => {
@@ -1286,7 +1321,16 @@ private encodeUrl(url: string): string {
         }
       }),
     );
-    return results.flat().sort(() => 0.5 - Math.random());
+    return results
+      .flat()
+      .map((m) => ({
+        ...m,
+        availablePlatforms:
+          m.availablePlatforms?.length
+            ? m.availablePlatforms
+            : this.resolveAvailablePlatforms(m.tmdbId),
+      }))
+      .sort(() => 0.5 - Math.random());
   }
 
   /**
@@ -1929,7 +1973,16 @@ private encodeUrl(url: string): string {
     });
 
     this.logger.log(`[Airing] Found ${airingMovies.length} airing series across ${platforms.join(', ')}`);
-    return airingMovies.map((m) => this.toLightweightMovie(m) as Movie);
+    return airingMovies.map((m) => {
+      const light = this.toLightweightMovie(m) as Movie;
+      return {
+        ...light,
+        availablePlatforms:
+          light.availablePlatforms?.length
+            ? light.availablePlatforms
+            : this.resolveAvailablePlatforms(light.tmdbId),
+      };
+    });
   }
 
   async getTrendingThisWeek(
@@ -1965,9 +2018,16 @@ private encodeUrl(url: string): string {
       }
     }
 
-    const trending = Array.from(uniqueMap.values()).map(
-      (m) => this.toLightweightMovie(m) as Movie,
-    );
+    const trending = Array.from(uniqueMap.values()).map((m) => {
+      const light = this.toLightweightMovie(m) as Movie;
+      return {
+        ...light,
+        availablePlatforms:
+          light.availablePlatforms?.length
+            ? light.availablePlatforms
+            : this.resolveAvailablePlatforms(light.tmdbId),
+      };
+    });
 
     this.logger.log(
       `[Trending] Found ${trending.length} trending titles across ${platforms.join(", ")}`,
