@@ -641,8 +641,10 @@ private encodeUrl(url: string): string {
     // ══════════════════════════════════════════════════════════════════
     const urgencyRails: CatalogRail[] = [
       { id: "leaving-soon", name: rnd(["Leaving Soon", "Don't Miss Out"]), mediaType: "movie", path: `discover/movie?${base}&sort_by=popularity.asc&vote_count.gte=100` },
-      { id: "upcoming-movies", name: rnd(["Coming Soon", "Upcoming Movies"]), mediaType: "movie", path: `discover/movie?${base}&primary_release_date.gte=${today}` },
-      { id: "upcoming-series", name: rnd(["New Series Coming", "Premiering Soon"]), mediaType: "tv", path: `discover/tv?${base}&first_air_date.gte=${today}` },
+      // Upcoming rails intentionally OMIT with_watch_providers: future premieres have no
+      // streaming provider listed yet, so the provider constraint empties the rail.
+      { id: "upcoming-movies", name: rnd(["Coming Soon", "Upcoming Movies"]), mediaType: "movie", pages: 8, path: `discover/movie?&sort_by=popularity.desc&primary_release_date.gte=${today}` },
+      { id: "upcoming-series", name: rnd(["New Series Coming", "Premiering Soon"]), mediaType: "tv", pages: 8, path: `discover/tv?&sort_by=popularity.desc&first_air_date.gte=${today}` },
     ];
     // ══════════════════════════════════════════════════════════════════
     // ASSEMBLE — Balanced, non-repetitive subset
