@@ -1026,6 +1026,14 @@ private encodeUrl(url: string): string {
       cast: m.cast || [],
       director: m.director,
       availablePlatforms: m.availablePlatforms || [],
+      // Rails render date + S/E badges (airing week, upcoming, countdowns), so
+      // keep release/airing metadata on lightweight payloads instead of
+      // stripping it — without these fields cards show no air-date at all.
+      releaseDate: m.releaseDate,
+      expectedOttDate: m.expectedOttDate,
+      imdbRating: m.imdbRating,
+      isAnime: m.isAnime,
+      nextEpisode: m.nextEpisode,
     };
   }
 
