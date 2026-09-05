@@ -70,6 +70,25 @@ let browser = null;
 let browserBusy = false;
 const cache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_MAX_ENTRIES = 500;   // hard cap — evict oldest beyond this (memory guard)
+
+/* Bounded cache: prune expired entries every 60s and never let the Map grow
+   without limit. Long-running instances previously accumulated one entry per
+   unique title+season+episode forever, leaking memory on Render's small plans. */
+setInterval(() => {
+  const now = Date.now();
+  // Drop everything past its TTL (netmirror entries carry their own shorter ttl)
+  for (const [k, v] of cache) {
+    const ttl = v.ttl || CACHE_TTL;
+    if (now - v.time > ttl) cache.delete(k);
+  }
+  // Enforce the size cap by evicting oldest (Map preserves insertion order)
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}, 60 * 1000);
 
 async function getBrowser() {
   // Force a fresh launch if cached browser is closed or a launch failed before

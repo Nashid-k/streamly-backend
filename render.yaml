@@ -1,0 +1,35 @@
+# Streamly API backend — Render Blueprint
+# Import this file via Render Dashboard → New + → Blueprint.
+# The health check path is what Render probes while the instance is up;
+# a successful probe also keeps the free instance from idle-sleeping as long
+# as traffic (or the private service keepalive) is flowing.
+services:
+  - type: web
+    name: streamly-backend
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.19.4
+      - key: PORT
+        value: 4000
+      - key: TMDB_API_KEY
+        sync: false
+      - key: TMDB_READ_TOKEN
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false

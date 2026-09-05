@@ -1,0 +1,18 @@
+# Streamly stream-service — Render Blueprint
+# Import this file via Render Dashboard → New + → Blueprint.
+# Uses the official Playwright Docker image so Chromium boots with the right
+# system deps. Keep the +1 instance warm with the keepalive action or a ping
+# every ≤10 minutes (Render free idle timeout is ~15 min).
+services:
+  - type: web
+    name: streamly-stream-service
+    runtime: docker
+    plan: free
+    rootDir: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: FRONTEND_URL
+        sync: false
