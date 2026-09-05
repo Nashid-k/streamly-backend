@@ -16,5 +16,6 @@ export interface StreamAdapter {
     type: "movie" | "tv",
     season?: number,
     episode?: number,
+    title?: string,
   ): Promise<ResolvedStream | null>;
 }

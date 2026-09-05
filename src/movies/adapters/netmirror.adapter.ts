@@ -1,88 +1,127 @@
 import { StreamAdapter, ResolvedStream } from "./adapter.interface";
 import { BaseAdapter } from "./base.adapter";
+import { NetmirrorDomainResolver } from "./netmirror-domains";
+
+const PLAYLIST_TM = "1724829817";
+const HLSCLIENT_ID = "unknown::ni";
+
+interface NetmirrorTrack {
+  kind?: string;
+  file?: string;
+  label?: string;
+  language?: string;
+}
+
+interface NetmirrorPlaylistItem {
+  sources?: Array<{ file?: string; label?: string; type?: string; default?: string }>;
+  tracks?: NetmirrorTrack[];
+}
 
 export class NetmirrorAdapter extends BaseAdapter implements StreamAdapter {
   name = "netmirror";
   index = 4; // Prioritize this since it supports multi-audio!
+
+  private readonly resolver = new NetmirrorDomainResolver();
 
   async resolve(
     tmdbId: string,
     type: "movie" | "tv",
     season?: number,
     episode?: number,
+    title?: string,
   ): Promise<ResolvedStream | null> {
-    try {
-      // NOTE: Netmirror domain frequently changes (net52.cc, netmirror.app, etc.)
-      const baseUrl = "https://net52.cc";
+    if (type === "tv" && (season !== undefined || episode !== undefined)) {
+      console.error("Netmirror: per-episode ids require the CF-gated web UI; cannot resolve");
+      return null;
+    }
 
-      // Attempt to hit their standard embed route (this may need adjustment if they use IMDB IDs instead of TMDB)
-      const embedUrl =
-        type === "movie"
-          ? `${baseUrl}/e/movie/${tmdbId}`
-          : `${baseUrl}/e/tv/${tmdbId}/${season}/${episode}`;
+    const searchQuery = title || tmdbId;
+    if (!searchQuery) return null;
 
-      const html = await this.fetchHtml(embedUrl);
+    const bases = await this.resolver.liveBases();
+    if (bases.length === 0) {
+      console.error("Netmirror: no live mirror domains found");
+      return null;
+    }
 
-      // Extract tokens from HTML
-      const timeMatch = html.match(/data-time="([^"]+)"/);
-      const hashMatch = html.match(/data-h="([^"]+)"/);
-      const titleMatch = html.match(/data-title="([^"]+)"/);
-      const videoIdMatch = html.match(/playerstart\("([^"]+)"\)/);
+    for (const baseUrl of bases) {
+      try {
+        const contentId = await this.searchContentId(baseUrl, searchQuery);
+        if (!contentId) continue;
 
-      if (!timeMatch || !hashMatch || !videoIdMatch) {
-        console.error("Netmirror: Failed to extract tokens from HTML");
-        return null;
-      }
+        const playlistUrl = `${baseUrl}/playlist.php?id=${contentId}&t=&tm=${PLAYLIST_TM}`;
+        const res = await fetch(playlistUrl, {
+          headers: {
+            "User-Agent": this.userAgent,
+            Referer: `${baseUrl}/`,
+            Accept: "application/json",
+          },
+          signal: AbortSignal.timeout(10000),
+        });
 
-      const time = timeMatch[1];
-      const hash = hashMatch[1];
-      const title = titleMatch ? encodeURIComponent(titleMatch[1]) : "";
-      const videoId = videoIdMatch[1];
+        if (!res.ok) continue;
+        const playlistData = (await res.json()) as NetmirrorPlaylistItem[];
+        if (!Array.isArray(playlistData) || playlistData.length === 0) continue;
 
-      // Construct the playlist API url
-      const playlistUrl = `${baseUrl}/playlist.php?id=${videoId}&t=${title}&tm=${time}&h=${hash}`;
+        const fullHdSource = this.fullHdSource(playlistData);
+        if (!fullHdSource) continue;
 
-      // Fetch the JWPlayer playlist JSON
-      const res = await fetch(playlistUrl, {
-        headers: {
-          "User-Agent": this.userAgent,
-          Referer: embedUrl,
-          Accept: "application/json",
-        },
-      });
-
-      if (!res.ok) return null;
-      const playlistData = await res.json();
-
-      // Parse JWPlayer playlist format (usually an array with a "sources" array)
-      // Example: [{ sources: [{ file: "https://...m3u8" }] }]
-      let m3u8Url = "";
-      if (Array.isArray(playlistData) && playlistData.length > 0) {
-        const item = playlistData[0];
-        if (item.sources && item.sources.length > 0) {
-          m3u8Url = item.sources[0].file;
-        }
-      }
-
-      if (m3u8Url) {
         return {
-          manifestUrl: m3u8Url,
+          manifestUrl: this.absolutize(fullHdSource, baseUrl),
           type: "hls",
           headers: {
             "User-Agent": this.userAgent,
-            Referer: baseUrl,
+            Referer: `${baseUrl}/`,
           },
-          referer: baseUrl,
-          expiresAt: Date.now() + 60 * 60 * 1000,
+          referer: `${baseUrl}/`,
+          expiresAt: Date.now() + 12 * 60 * 60 * 1000,
           serverName: this.name,
           serverIndex: this.index,
         };
+      } catch {
+        continue;
       }
+    }
 
+    return null;
+  }
+
+  private async searchContentId(baseUrl: string, query: string): Promise<string | null> {
+    const searchUrl = `${baseUrl}/search.php?s=${encodeURIComponent(query)}`;
+    const res = await fetch(searchUrl, {
+      headers: {
+        "User-Agent": this.userAgent,
+        Referer: `${baseUrl}/`,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as { type?: number; searchResult?: Array<{ id?: string; t?: string }> };
+    if (!data || !Array.isArray(data.searchResult) || data.searchResult.length === 0) {
       return null;
-    } catch (e) {
-      console.error("Netmirror adapter failed:", e);
-      return null;
+    }
+
+    return data.searchResult[0]?.id || null;
+  }
+
+  private fullHdSource(items: NetmirrorPlaylistItem[]): string | null {
+    for (const item of items) {
+      if (!item || !Array.isArray(item.sources)) continue;
+      const hd = item.sources.find((s) => s && typeof s.file === "string" && !s.file.includes("q="));
+      if (hd && hd.file) return hd.file;
+      const first = item.sources.find((s) => s && typeof s.file === "string");
+      if (first && first.file) return first.file;
+    }
+    return null;
+  }
+
+  private absolutize(path: string, baseUrl: string): string {
+    try {
+      return new URL(path, baseUrl).toString();
+    } catch {
+      return path;
     }
   }
 }

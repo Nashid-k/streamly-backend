@@ -296,6 +296,184 @@ app.get('/api/stream', async (req, res) => {
   }
 });
 
+/* ── NetMirror static resolver ────────────────────────────────
+   NetMirror (net77.cc) serves a CORS-open multi-audio HLS master per
+   title, but its JSON lookups (search.php / playlist.php) send no CORS
+   headers, so they must run server-side. This path is pure HTTP — no
+   Playwright, no session, no captcha.
+   ────────────────────────────────────────────────────────────── */
+const NETMIRROR_TM_PARAM = '1724829817'; // static, reusable per NetMirror archive
+let netmirrorMirrorCache = { base: null, time: 0 };
+
+async function discoverNetmirrorMirror() {
+  const MIRROR_TTL = 60 * 60 * 1000; // 1h — mirrors rotate
+  const cached = netmirrorMirrorCache;
+  if (cached.base && Date.now() - cached.time < MIRROR_TTL) return cached.base;
+  const defaultBase = 'https://net77.cc';
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 4000);
+    const res = await fetch('https://netmirror.gg/', { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    clearTimeout(t);
+    const html = await res.text();
+    // netmirror.gg is the master seat; it links the live mirror (net77.cc etc.)
+    const m = html.match(/https?:\/\/(net[a-z0-9]+\.cc)/i) || html.match(/\b(net[a-z0-9]+\.cc)\b/i);
+    netmirrorMirrorCache = { base: m ? `https://${m[1]}` : defaultBase, time: Date.now() };
+  } catch {
+    netmirrorMirrorCache = { base: defaultBase, time: Date.now() };
+  }
+  return netmirrorMirrorCache.base;
+}
+
+async function netmirrorSearch(base, title) {
+  const res = await fetch(`${base}/search.php?s=${encodeURIComponent(title)}`, {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`NetMirror search failed (${res.status})`);
+  const data = await res.json();
+  // type:1 is the "Top Searches" fallback (no real hit); type:0 has real results
+  const results = Array.isArray(data?.searchResult) ? data.searchResult : [];
+  const hit = results.find(r => typeof r?.id === 'string') || results[0];
+  return hit ? { id: hit.id, name: hit.t || title } : null;
+}
+
+async function netmirrorPlaylist(base, id) {
+  const res = await fetch(`${base}/playlist.php?id=${encodeURIComponent(id)}&t=&tm=${NETMIRROR_TM_PARAM}`, {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`NetMirror playlist failed (${res.status})`);
+  const data = await res.json();
+  // NetMirror returns a top-level ARRAY of player configs; the first is the title
+  const entry = Array.isArray(data) ? data[0] : data;
+  const sources = Array.isArray(entry?.sources) ? entry.sources : [];
+  // "Full HD" master = the source WITHOUT a ?q= quality suffix
+  const fullHd = sources.find(s => s?.file && !s.file.includes('?q=')) || sources[0];
+  if (!fullHd?.file) return null;
+  const abs = /^https?:/.test(fullHd.file) ? fullHd.file : base + fullHd.file;
+  const captions = (Array.isArray(entry?.tracks) ? entry.tracks : [])
+    .filter(t => (t?.kind === 'captions' || t?.kind === 'subtitles') && t?.file)
+    .map(t => ({
+      label: t.label || 'English',
+      url: t.file.startsWith('//') ? `https:${t.file}` : (/^https?:/.test(t.file) ? t.file : base + t.file),
+    }));
+  const thumbnails = (Array.isArray(entry?.tracks) ? entry.tracks : [])
+    .filter(t => t?.kind === 'thumbnails' && t?.file)
+    .map(t => (t.file.startsWith('//') ? `https:${t.file}` : /^https?:/.test(t.file) ? t.file : base + t.file));
+  return { streamUrl: abs, captions, thumbnails };
+}
+
+async function netmirrorAudioLanguages(text) {
+  const langs = [];
+  for (const m of text.matchAll(/#EXT-X-MEDIA:TYPE=AUDIO[^\n]*/g)) {
+    const line = m[0];
+    const language = (line.match(/LANGUAGE="([^"]*)"/) || [])[1] || '';
+    const name = (line.match(/NAME="([^"]*)"/) || [])[1] || language || 'Unknown';
+    if (language || name) langs.push({ language, name });
+  }
+  return langs;
+}
+
+/* Lightweight liveness probe: a Cloudflare-fronted media origin answers 2xx to a
+   Range'd GET when it is alive, and 5xx/523 when it is not. */
+async function netmirrorMediaAlive(url) {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0', Range: 'bytes=0-2047' },
+      signal: AbortSignal.timeout(6000),
+    });
+    return res.ok || res.status === 206;
+  } catch {
+    return false;
+  }
+}
+
+/* Verify the master's media chain is actually playable RIGHT NOW before handing
+   it to the player. NetMirror's media CDN (nm-cdn*.top) has repeatedly died
+   while the site shell + captions + thumbnails stay up; never serve a broken
+   master. */
+async function netmirrorPreflight(masterUrl) {
+  try {
+    const res = await fetch(masterUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0', Range: 'bytes=0-4095' },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return { ok: false, reason: `master http ${res.status}` };
+    const text = await res.text();
+    const mediaUrls = [...text.matchAll(/https?:\/\/[^\s"']+/g)].map(m => m[0]);
+    if (mediaUrls.length === 0) return { ok: false, reason: 'no media urls in master' };
+    // Probe all variant/audio playlists in parallel so one alive CDN is found fast
+    const alive = await Promise.all(mediaUrls.slice(0, 6).map(u => netmirrorMediaAlive(u)));
+    const idx = alive.findIndex(Boolean);
+    if (idx < 0) return { ok: false, reason: 'media hosts unreachable' };
+    const verified = mediaUrls[idx];
+    return { ok: true, audioLanguages: netmirrorAudioLanguages(text), mediaHost: new URL(verified).hostname };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+}
+
+app.get('/api/netmirror', async (req, res) => {
+  const { title, type = 'movie', mirror } = req.query;
+  if (!title) return res.status(400).json({ error: 'title is required' });
+
+  const cacheKey = `netmirror:${title}:${type}`;
+  const cached = cache.get(cacheKey);
+  if (cached && Date.now() - cached.time < (cached.ttl || CACHE_TTL)) {
+    return res.json({ ...cached.data, cached: true });
+  }
+
+  try {
+    // Candidate mirrors: explicit override, then discovered + known-live fallbacks
+    const discovered = await discoverNetmirrorMirror();
+    const candidates = [];
+    const pushMirror = (m) => {
+      if (/^https:\/\/(net[a-z0-9]+\.cc)$/i.test(m || '') && !candidates.includes(m)) candidates.push(m);
+    };
+    pushMirror(mirror);
+    pushMirror(discovered);
+    pushMirror('https://net77.cc');
+    pushMirror('https://net52.cc');
+
+    for (const base of candidates) {
+      const hit = await netmirrorSearch(base, title).catch(() => null);
+      if (!hit) continue;
+      const pl = await netmirrorPlaylist(base, hit.id).catch(() => null);
+      if (!pl) continue;
+      const pf = await netmirrorPreflight(pl.streamUrl);
+      if (!pf.ok) continue;
+
+      const data = {
+        title,
+        contentId: hit.id,
+        mirror: base,
+        provider: 'netmirror',
+        streamUrl: pl.streamUrl, // CORS-open — hls.js can fetch it directly
+        corsOpen: true,
+        audioLanguages: pf.audioLanguages,
+        mediaHost: pf.mediaHost,
+        subtitles: pl.captions,
+        thumbnails: pl.thumbnails,
+      };
+      cache.set(cacheKey, { data, time: Date.now(), ttl: 90 * 1000 }); // CDN flaps — don't cache success long
+      return res.json(data);
+    }
+
+    const msg = {
+      error: 'NetMirror is temporarily unavailable (no reachable media host)',
+      unreachable: true,
+      mirror: candidates[0] || discovered,
+      attempted: candidates,
+    };
+    console.warn(`[NETMIRROR] unreachable for "${title}" via [${candidates.join(', ')}]`);
+    return res.status(503).json(msg);
+  } catch (error) {
+    console.error('[NETMIRROR] error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 /* ── CORS Proxy ────────────────────────────────────────────────
    Fetches any URL server-side and returns it with CORS headers.
    For m3u8 content, rewrites internal URLs so sub-playlists and
