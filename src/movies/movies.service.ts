@@ -2284,6 +2284,15 @@ async searchMovies(
             const uniqueLiveResults = liveResults.filter(
               (lr) => !results.some((r) => r.tmdbId === lr.tmdbId),
             );
+            // Exact-title hits (e.g. searching "dc" → the 2026 Tamil "DC")
+            // belong first — stable sort keeps TMDB order inside equal groups.
+            const qn = normalized;
+            uniqueLiveResults.sort((a, b) => {
+              const ae = a.title?.toLowerCase().trim() === qn;
+              const be = b.title?.toLowerCase().trim() === qn;
+              if (ae !== be) return ae ? -1 : 1;
+              return 0;
+            });
             results.unshift(...uniqueLiveResults);
           }
         } catch (e) {
