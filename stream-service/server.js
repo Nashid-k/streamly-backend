@@ -108,6 +108,43 @@ function getCineSrcUrl(tmdbId, type, season, episode) {
   return `https://cinesrc.st/embed/movie/${tmdbId}?color=%230A84FF&autoplay=true&controls=false`;
 }
 
+/* Detect whether a provider CDN allows the browser to fetch it directly
+   (CORS-open). If it does, hls.js plays straight from the CDN — no segment
+   relay through this server, which removes the Render-free-tier bottleneck
+   that otherwise starves the buffer and causes pauses/reloads. */
+async function detectCorsOpen(masterUrl) {
+  try {
+    const origin = (process.env.FRONTEND_URL || '').split(',')[0]?.trim() || 'https://streamlyvercelin.vercel.app';
+    const host = new URL(masterUrl).hostname;
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+      Origin: origin,
+    };
+    if (/bright67|movieboxnoob/.test(host)) {
+      headers['Referer'] = 'https://cinesrc.st/';
+      headers['Origin'] = origin;
+    }
+    const res = await fetch(masterUrl, { headers, signal: AbortSignal.timeout(7000) });
+    if (!res.ok) return false;
+    const acao = (res.headers.get('access-control-allow-origin') || '').toLowerCase();
+    if (acao !== '*' && acao !== origin.toLowerCase()) return false;
+    // Confirm a real media payload (a variant/segment) also allows cross-origin
+    // reads — master-level CORS alone isn't enough.
+    const text = await res.text();
+    const firstMedia = text.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('#'));
+    if (!firstMedia) return false;
+    const segUrl = new URL(firstMedia, masterUrl).href;
+    const seg = await fetch(segUrl, {
+      headers: { Range: 'bytes=0-1023', ...headers },
+      signal: AbortSignal.timeout(7000),
+    });
+    const segAcao = (seg.headers.get('access-control-allow-origin') || '').toLowerCase();
+    return segAcao === '*' || segAcao === origin.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 app.get('/api/stream', async (req, res) => {
   const { tmdbId, type = 'movie', season, episode } = req.query;
 
@@ -259,10 +296,12 @@ app.get('/api/stream', async (req, res) => {
       //  2) Truly nothing captured -> the caller falls back to the CineSrc iframe.
       if ((sawSkeOnly || encryptedOnly) && capturedUrls.length > 0) {
         const skeUrl = capturedUrls[0];
+        const corsOpen = await detectCorsOpen(skeUrl).catch(() => false);
         const data = {
           streamUrl: skeUrl,
           provider: 'thunder',
           sessionProtected: true,
+          corsOpen,
           allUrls: [...new Set(capturedUrls)].slice(0, 8),
           subtitles: [...new Set(subtitleUrls)],
           thumbnails: [...new Set(thumbnailUrls)],
@@ -277,6 +316,7 @@ app.get('/api/stream', async (req, res) => {
     const data = {
       streamUrl: bestUrl,
       provider,
+      corsOpen: await detectCorsOpen(bestUrl).catch(() => false),
       allUrls: [...new Set(capturedUrls)],
       subtitles: [...new Set(subtitleUrls)],
       thumbnails: [...new Set(thumbnailUrls)],
@@ -502,27 +542,45 @@ app.get('/api/proxy', async (req, res) => {
     const response = await fetch(url, { headers: upstreamHeaders });
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
 
-    // Read entire response into buffer so we can detect m3u8 by content signature
-    // (CDNs often serve m3u8 with wrong Content-Type or .jpg/.bin extensions)
-    const bodyBuffer = Buffer.from(await response.arrayBuffer());
-    const head = bodyBuffer.toString('utf8', 0, 64);
+    // Read the first chunk so we can detect m3u8 by content signature (CDNs
+    // often serve m3u8 with wrong Content-Type or .jpg/.bin extensions), then
+    // STREAM the rest — never buffer a whole segment/variant. Buffering the
+    // full body through a small instance is what starves the player buffer,
+    // causing pauses and reloads.
+    const reader = response.body.getReader();
+    const { value: firstChunk } = await reader.read();
+    const head = Buffer.from(firstChunk || []).toString('utf8', 0, 64);
     const isM3u8 = head.trimStart().startsWith('#EXTM3U') ||
                    contentType.includes('mpegurl') || contentType.includes('x-mpegurl');
 
     if (isM3u8) {
-      const text = bodyBuffer.toString('utf8');
+      let body = Buffer.alloc(0);
+      if (firstChunk) body = Buffer.concat([body, firstChunk]);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        body = Buffer.concat([body, value]);
+      }
+      const text = body.toString('utf8');
       const proxyBase = `${req.protocol}://${req.get('host')}/api/proxy?url=`;
       const rewritten = rewriteM3u8(text, url, proxyBase);
       res.set('Content-Type', 'application/vnd.apple.mpegurl');
       res.set('Content-Length', Buffer.byteLength(rewritten));
       res.send(rewritten);
     } else {
-      const cl = response.headers.get('content-length');
-      if (cl) res.set('Content-Length', cl);
+      res.status(response.status);
       const cr = response.headers.get('content-range');
       if (cr) res.set('Content-Range', cr);
+      const cl = response.headers.get('content-length');
+      if (cl) res.set('Content-Length', cl);
       res.set('Content-Type', contentType);
-      res.end(bodyBuffer);
+      if (firstChunk) res.write(Buffer.from(firstChunk));
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+      res.end();
     }
   } catch (e) {
     console.error('[PROXY] error:', e.message);
