@@ -2294,6 +2294,62 @@ async searchMovies(
               return 0;
             });
             results.unshift(...uniqueLiveResults);
+
+            // If even that surfaced nothing, the query may be a person
+            // (director/actor, e.g. "lokesh" → Coolie 2026). Expand the top
+            // person hit into their most recent on-screen movies.
+            if (results.length === 0) {
+              const people = (tmdbSearch.results || []).filter(
+                (x: any) => x.media_type === "person",
+              );
+              const topPerson = people[0];
+              if (topPerson?.id) {
+                const credits = await this.tmdb(
+                  `person/${topPerson.id}/movie_credits`,
+                ).catch((e) => {
+                  this.logger.error(
+                    `Failed to fetch credits for person ${topPerson.id}`,
+                    e,
+                  );
+                  return null;
+                });
+                const list =
+                  credits?.cast?.length > 0
+                    ? credits.cast
+                    : (credits?.crew || []).filter(
+                        (c: any) => c.job === "Director",
+                      );
+                if (Array.isArray(list) && list.length > 0) {
+                  const recent = list
+                    .filter(
+                      (c: any) => c.release_date || c.first_air_date,
+                    )
+                    .sort(
+                      (a: any, b: any) =>
+                        new Date(
+                          b.release_date || b.first_air_date,
+                        ).getTime() -
+                        new Date(a.release_date || a.first_air_date).getTime(),
+                    )
+                    .slice(0, 10);
+                  const personMovies: Movie[] = [];
+                  for (const credit of recent) {
+                    const movieObj = this.toMovie(credit, "movie");
+                    movieObj.availablePlatforms = ["Other"];
+                    this.state[statePlatform].movies.set(
+                      movieObj.id,
+                      movieObj,
+                    );
+                    this.state[statePlatform].tmdbIdIndex.set(
+                      movieObj.tmdbId!,
+                      movieObj.id,
+                    );
+                    personMovies.push(movieObj);
+                  }
+                  results.unshift(...personMovies);
+                }
+              }
+            }
           }
         } catch (e) {
           this.logger.error(
